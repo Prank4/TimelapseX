@@ -25,14 +25,14 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 - [x] Auto-create a new active session immediately after Save or Discard.
 
 ## 0.2.x — Settings
-- [ ] Permissions status rows for Camera and Photos, read-only and linking out to Settings if denied.
-- [ ] Lens override segmented control: Auto, Wide, Ultra-Wide; live-applies without restart.
-- [ ] Quality mode toggle: Best Quality or Fastest Capture; live-applies without restart.
-- [ ] Grid overlay segmented control: Off, Rule of Thirds, Center Cross; preview-only.
-- [ ] Exposure and Focus Lock toggle, live-locking and unlocking device exposure and focus.
-- [ ] White Balance Lock toggle, live-locking and unlocking device white balance.
-- [ ] Lens-change interaction: auto-drop both locks to continuous when lens override changes, and reflect that in the UI.
-- [ ] One-line caption under each non-obvious toggle.
+- [x] Permissions status rows for Camera and Photos, read-only and linking out to Settings if denied.
+- [x] Lens override segmented control: Auto, Wide, Ultra-Wide; live-applies without restart.
+- [x] Quality mode toggle: Best Quality or Fastest Capture; live-applies without restart.
+- [x] Grid overlay segmented control: Off, Rule of Thirds, Center Cross; preview-only.
+- [x] Exposure and Focus Lock toggle, live-locking and unlocking device exposure and focus.
+- [x] White Balance Lock toggle, live-locking and unlocking device white balance.
+- [x] Lens-change interaction: auto-drop both locks to continuous when lens override changes, and reflect that in the UI.
+- [x] One-line caption under each non-obvious toggle.
 
 ## 0.3.x — Timelapse Export
 - [ ] "Create Timelapse" action from a saved session's detail view.

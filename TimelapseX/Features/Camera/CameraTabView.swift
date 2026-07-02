@@ -16,6 +16,11 @@ struct CameraTabView: View {
             if cameraViewModel.authorizationStatus == .authorized {
                 CameraPreviewView(session: cameraViewModel.captureSession)
                     .ignoresSafeArea(.container, edges: .top)
+                    .overlay {
+                        GridOverlayView(type: cameraViewModel.settingsStore.gridOverlay)
+                            .ignoresSafeArea(.container, edges: .top)
+                            .allowsHitTesting(false)
+                    }
                     .onAppear {
                         cameraViewModel.startSession()
                         UIApplication.shared.isIdleTimerDisabled = true

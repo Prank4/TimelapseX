@@ -16,16 +16,32 @@ final class CameraViewModel: NSObject, ObservableObject {
     @Published private(set) var statusMessage = "Ready"
 
     let sessionStore: SessionStore
+    let settingsStore = CameraSettingsStore.shared
     let captureSession = AVCaptureSession()
 
     private let sessionQueue = DispatchQueue(label: "TimelapseX.Camera.SessionQueue")
     private let photoOutput = AVCapturePhotoOutput()
     private var pendingCaptureTimestamp: Date?
     private var configured = false
+    private var cancellables = Set<AnyCancellable>()
 
     init(sessionStore: SessionStore = SessionStore()) {
         self.sessionStore = sessionStore
         super.init()
+
+        settingsStore.$lensOverride
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.updateDeviceInput()
+            }
+            .store(in: &cancellables)
+
+        Publishers.CombineLatest(settingsStore.$exposureFocusLocked, settingsStore.$whiteBalanceLocked)
+            .dropFirst()
+            .sink { [weak self] _, _ in
+                self?.applyLocks()
+            }
+            .store(in: &cancellables)
     }
 
     func refreshAuthorizationStatus() {
@@ -96,7 +112,7 @@ final class CameraViewModel: NSObject, ObservableObject {
         let settings = AVCapturePhotoSettings()
         settings.flashMode = .off
         settings.isHighResolutionPhotoEnabled = true
-        settings.photoQualityPrioritization = .quality
+        settings.photoQualityPrioritization = (settingsStore.qualityMode == .bestQuality) ? .quality : .speed
         settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
 
         photoOutput.capturePhoto(with: settings, delegate: self)
@@ -120,9 +136,8 @@ final class CameraViewModel: NSObject, ObservableObject {
 
             try device.lockForConfiguration()
             defer { device.unlockForConfiguration() }
-            device.focusMode = .continuousAutoFocus
-            device.exposureMode = .continuousAutoExposure
-            device.whiteBalanceMode = .continuousAutoWhiteBalance
+            
+            applyDeviceSettings(device)
 
             if let format = largestPhotoFormat(for: device) {
                 device.activeFormat = format
@@ -141,10 +156,16 @@ final class CameraViewModel: NSObject, ObservableObject {
     }
 
     private func bestCameraDevice() throws -> AVCaptureDevice {
-        let preferredTypes: [AVCaptureDevice.DeviceType] = [
-            .builtInUltraWideCamera,
-            .builtInWideAngleCamera
-        ]
+        let lens = settingsStore.lensOverride
+        let preferredTypes: [AVCaptureDevice.DeviceType]
+        switch lens {
+        case .auto:
+            preferredTypes = [.builtInUltraWideCamera, .builtInWideAngleCamera]
+        case .wide:
+            preferredTypes = [.builtInWideAngleCamera]
+        case .ultraWide:
+            preferredTypes = [.builtInUltraWideCamera]
+        }
 
         for deviceType in preferredTypes {
             if let device = AVCaptureDevice.default(deviceType, for: .video, position: .back) {
@@ -152,7 +173,103 @@ final class CameraViewModel: NSObject, ObservableObject {
             }
         }
 
-        throw NSError(domain: "TimelapseX.Camera", code: 1, userInfo: [NSLocalizedDescriptionKey: "No back camera available"])
+        throw NSError(
+            domain: "TimelapseX.Camera",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "No back camera available for \(lens.displayName)"]
+        )
+    }
+
+    func updateDeviceInput() {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.captureSession.beginConfiguration()
+            defer { self.captureSession.commitConfiguration() }
+
+            // Remove current input
+            if let currentInput = self.captureSession.inputs.first as? AVCaptureDeviceInput {
+                self.captureSession.removeInput(currentInput)
+            }
+
+            do {
+                let device = try self.bestCameraDevice()
+                let input = try AVCaptureDeviceInput(device: device)
+
+                if self.captureSession.canAddInput(input) {
+                    self.captureSession.addInput(input)
+                } else {
+                    throw NSError(domain: "TimelapseX.Camera", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to add device input"])
+                }
+
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+
+                self.applyDeviceSettings(device)
+
+                if let format = self.largestPhotoFormat(for: device) {
+                    device.activeFormat = format
+                }
+            } catch {
+                Task { @MainActor in
+                    self.statusMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func applyLocks() {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard let device = (self.captureSession.inputs.first as? AVCaptureDeviceInput)?.device else { return }
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+
+                self.applyDeviceSettings(device)
+            } catch {
+                Task { @MainActor in
+                    self.statusMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func applyDeviceSettings(_ device: AVCaptureDevice) {
+        let isExposureFocusLocked = settingsStore.exposureFocusLocked
+        let isWhiteBalanceLocked = settingsStore.whiteBalanceLocked
+
+        // Exposure
+        if isExposureFocusLocked {
+            if device.isExposureModeSupported(.locked) {
+                device.exposureMode = .locked
+            }
+        } else {
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+        }
+
+        // Focus
+        if isExposureFocusLocked {
+            if device.isFocusModeSupported(.locked) {
+                device.focusMode = .locked
+            }
+        } else {
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+        }
+
+        // White Balance
+        if isWhiteBalanceLocked {
+            if device.isWhiteBalanceModeSupported(.locked) {
+                device.whiteBalanceMode = .locked
+            }
+        } else {
+            if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                device.whiteBalanceMode = .continuousAutoWhiteBalance
+            }
+        }
     }
 
     private func largestPhotoFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {

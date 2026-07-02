@@ -7,7 +7,7 @@ in project-specific documentation.
 
 ## Core Rules
 
-1. For git workflow, follow `GIT_PRACTICES.md`.
+1. **Git Branching First**: Before writing any code, modifying any files, or starting implementation work, you **must** create and check out the correct task branch. If branch creation or checkout fails, you **must stop immediately** and resolve the branch issue before continuing. Follow the naming and branching workflow rules in `GIT_PRACTICES.md`.
 
 2. Before writing any code, describe the approach and wait for approval.
    If requirements are ambiguous, ask clarifying questions first.
@@ -39,10 +39,6 @@ in project-specific documentation.
 8. When multiple tasks are provided, expand any inclusive range and
    execute them one at a time in the given order, returning to
    `version/v2` between tasks.
-
-9. Before implementation work starts, create and check out the correct
-   task branch. If branch creation fails, stop and resolve the branch
-   issue before writing more code.
 
 ---
 

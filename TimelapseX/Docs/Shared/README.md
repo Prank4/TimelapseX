@@ -14,7 +14,7 @@ This repo is the source of truth.
 
 # Snapshot
 
-Version: `v1.0.2`
+Version: `v1.0.3`
 Status: Stable
 Last Updated: 2026-07-02
 

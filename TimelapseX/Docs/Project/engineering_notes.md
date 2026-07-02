@@ -64,3 +64,15 @@ Implementation notes and handoff history for the current project snapshot.
 - Possible breakpoints: `NSPhotoLibraryAddUsageDescription` must be present in the Xcode target's Info tab for the Photos permission sheet to appear; the app will crash at runtime without it. The `performChanges` album-add relies on fetching the collection by its placeholder identifier in the same change block — if Photos defers index updates, the asset add may silently no-op; smoke-test on device.
 - Edge cases: Session folder deleted between `allSessions` load and `SessionDetailView` open (handled by empty-state guard). Discard of the active session immediately rotates to a new one — confirm a fresh active session appears after navigating back.
 - Suggested manual tests: Build and run. Capture frames. Open Settings → Gallery row, verify thumbnail and frame count. Tap the row, verify thumbnail grid. Tap Save, confirm Photos permission sheet appears, confirm album exists in Photos, confirm "Saved" badge appears. Navigate back and confirm a new active session is shown. Capture again, open detail, Discard, confirm alert, confirm session disappears and a new active session starts. Verify tab bar is always visible throughout all navigation.
+
+## 0.2.x — Settings
+- Approach summary: Created `CameraSettingsStore` implementing enums, synchronization with `UserDefaults`, and permissions/foreground listeners. Observed settings changes in `CameraViewModel` to live-configure input device changes and lock modes dynamically. Added custom `GridOverlayView` rendering rule of thirds or center cross grid lines and integrated it into the camera preview. Expanded `SettingsView` with controls, captions, and links.
+- Files modified/added:
+  - `TimelapseX/Data/Settings/CameraSettingsStore.swift` (new) — settings store managing user preferences and permissions.
+  - `TimelapseX/Features/Camera/GridOverlayView.swift` (new) — overlay view showing thirds grid or crosshairs.
+  - `TimelapseX/Features/Camera/CameraViewModel.swift` — observed settings store and applied device setup/locks.
+  - `TimelapseX/Features/Camera/CameraTabView.swift` — overlayed GridOverlayView on preview.
+  - `TimelapseX/Features/Settings/SettingsView.swift` — controls, segmented selectors, and toggles with captions.
+- Possible breakpoints: Live swap of device input can fail if hardware is restricted or unavailable (safe-guarded in `bestCameraDevice`).
+- Edge cases: Changing lens override drops both locks dynamically in store and reflects in the UI (verified lock flags set to false).
+- Suggested manual tests: Toggle Lens Override, verify changes live without restarting. Toggle Grid Overlay, verify grid lines appear on preview screen. Test locking/unlocking Focus & Exposure and White Balance lock. Open denied permission rows to verify they deep link to the System Settings app.
