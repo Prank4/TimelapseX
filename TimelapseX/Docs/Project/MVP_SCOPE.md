@@ -5,7 +5,8 @@ Define the first shippable slice of the app and make the non-goals explicit.
 
 ## Scope
 - iOS 26.0+ only, with no back-compat branching.
-- A Camera tab that captures one photo per shutter press with minimal latency.
+- A Camera tab that captures one photo per volume-up press with minimal latency.
+- No on-screen shutter button; capture follows the Apple Camera app pattern.
 - A Settings tab that exposes permissions, camera controls, and the Gallery section.
 - Session-based local storage with one active session at a time.
 - Gallery review with Save and Discard actions.
@@ -13,6 +14,7 @@ Define the first shippable slice of the app and make the non-goals explicit.
 
 ## Goals
 - Keep the capture path simple and predictable during long print runs.
+- Keep capture tied to the hardware volume-up button so the UI stays uncluttered.
 - Make the session lifecycle obvious: capture locally, then save or discard.
 - Keep preview aids and live camera settings separate from saved output.
 - Avoid unnecessary Photos prompts until the user explicitly saves a session.

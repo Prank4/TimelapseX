@@ -25,11 +25,12 @@ In-memory only; the image file is the durable record.
 |---|---|---|
 | `sequenceNumber` | `Int` | Taken from the active session's `nextSequence`. |
 | `filename` | `String` | `IMG_{sequenceNumber:06d}.jpg`. |
-| `capturedAt` | `Date` | Press-down timestamp for EXIF and logs. |
+| `capturedAt` | `Date` | Volume-up press-down timestamp for EXIF and logs. |
 | `localURL` | `URL` | `Sessions/{sessionId}/{filename}`. |
 | `imageData` | `Data` | Transient, kept only long enough to write to disk. |
 
 No Photos write happens at capture time. Photos only enters the flow when a session is explicitly saved.
+The capture trigger is the hardware volume-up button, not an in-app shutter button.
 
 ## 3. `CameraConfiguration`
 Derived from device capabilities plus the current settings store.

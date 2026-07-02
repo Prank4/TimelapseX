@@ -24,11 +24,19 @@ Views observe state. They do not compute it.
 
 ## Modularity
 - Features are isolated
+- Keep each module, view, and view model in its own file when practical
+- If a file must contain more than one type, the filename should still
+  reflect the primary type it owns
 - Shared utilities live in Core/
 - Design tokens live in DesignSystem/
+
+## Naming
+- Use clear, feature-aligned names for folders and files
+- Prefer PascalCase for Swift types and keep file names aligned with the
+  primary type in the file
+- Avoid ambiguous names that hide the module's responsibility
 
 Architecture should optimize for:
 1. Readability
 2. Change safety
 3. Deletion ease
-
