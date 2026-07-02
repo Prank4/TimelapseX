@@ -16,7 +16,11 @@ in project-specific documentation.
    If a cohesive task genuinely needs more files, document the reason
    and keep the scope narrow instead of splitting it artificially.
 
-4. After writing code, list:
+4. Keep one primary module, view, or view model per file when practical.
+   If a file intentionally groups related types, the filename must still
+   match the primary type and the grouping must be justified.
+
+5. After writing code, list:
    - Approach summary
    - Files modified
    - Possible breakpoints
@@ -25,18 +29,18 @@ in project-specific documentation.
    Record the final notes in `docs/project/ENGINEERING_NOTES.md`.
    Do not rely on chat memory.
 
-5. When there is a bug:
+6. When there is a bug:
    - First write a test that reproduces the bug
    - Then fix the code until the test passes
 
-6. Every time a mistake is corrected, a new rule must be added to this
+7. Every time a mistake is corrected, a new rule must be added to this
    file so it never happens again.
 
-7. When multiple tasks are provided, expand any inclusive range and
+8. When multiple tasks are provided, expand any inclusive range and
    execute them one at a time in the given order, returning to
    `version/v2` between tasks.
 
-8. Before implementation work starts, create and check out the correct
+9. Before implementation work starts, create and check out the correct
    task branch. If branch creation fails, stop and resolve the branch
    issue before writing more code.
 
