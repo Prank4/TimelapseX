@@ -10,13 +10,12 @@ import AVFoundation
 
 struct CameraTabView: View {
     @ObservedObject var cameraViewModel: CameraViewModel
-    @State private var showTabBar = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
             if cameraViewModel.authorizationStatus == .authorized {
                 CameraPreviewView(session: cameraViewModel.captureSession)
-                    .ignoresSafeArea()
+                    .ignoresSafeArea(.container, edges: .top)
                     .onAppear {
                         cameraViewModel.startSession()
                         UIApplication.shared.isIdleTimerDisabled = true
@@ -34,25 +33,11 @@ struct CameraTabView: View {
                 permissionPrompt
             }
 
-            if showTabBar {
-                cameraStatusAndHint
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 28)
-            }
+            cameraStatusAndHint
+                .padding(.horizontal, 20)
+                .padding(.bottom, 28)
         }
         .background(Color.black)
-        .toolbar(showTabBar ? .visible : .hidden, for: .tabBar)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.easeInOut) {
-                showTabBar = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                withAnimation(.easeInOut) {
-                    showTabBar = false
-                }
-            }
-        }
     }
 
     private var permissionPrompt: some View {

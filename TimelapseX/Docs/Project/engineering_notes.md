@@ -49,3 +49,13 @@ Implementation notes and handoff history for the current project snapshot.
 - Edge cases: Missing compiler references in Xcode project. (Synchronized automatically due to `PBXFileSystemSynchronizedRootGroup`).
 - Suggested manual tests: Clean build and run on device/simulator. Switch between Camera and Settings tabs. Confirm volume-up hardware trigger captures frames and logs them properly to `Sessions/`.
 
+## 0.0.0 — Tab Bar Visibility Fix
+- Approach summary: Added `.toolbar(.visible, for: .tabBar)` modifier to the `List` inside the `NavigationStack` of the `settingsTab` in `ContentView.swift`. (Placing the modifier directly on the `NavigationStack` container is ignored by SwiftUI, so it was moved onto the child view to ensure the tab bar remains always visible when switching away from the auto-hiding Camera view).
+- Files modified:
+  - `TimelapseX/Features/ContentView.swift`
+- Possible breakpoints: None.
+- Edge cases: Future screens/tabs inside navigation controllers will need the visibility modifier attached directly to their active content views (not navigation containers) to override the camera's hidden state.
+- Suggested manual tests: Build the app, open the Camera screen, tap to hide the tab bar, and then switch to the Settings screen to verify the tab bar is immediately and continuously visible.
+
+
+
