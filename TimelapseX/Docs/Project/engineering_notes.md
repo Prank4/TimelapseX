@@ -51,11 +51,16 @@ Implementation notes and handoff history for the current project snapshot.
 
 ## 0.0.0 — Tab Bar Visibility Fix
 - Approach summary: Added `.toolbar(.visible, for: .tabBar)` modifier to the `List` inside the `NavigationStack` of the `settingsTab` in `ContentView.swift`. (Placing the modifier directly on the `NavigationStack` container is ignored by SwiftUI, so it was moved onto the child view to ensure the tab bar remains always visible when switching away from the auto-hiding Camera view).
-- Files modified:
-  - `TimelapseX/Features/ContentView.swift`
-- Possible breakpoints: None.
-- Edge cases: Future screens/tabs inside navigation controllers will need the visibility modifier attached directly to their active content views (not navigation containers) to override the camera's hidden state.
-- Suggested manual tests: Build the app, open the Camera screen, tap to hide the tab bar, and then switch to the Settings screen to verify the tab bar is immediately and continuously visible.
 
-
-
+## 0.1.x — Gallery and Save
+- Approach summary: Added a Gallery section to the Settings tab backed by `GalleryView` + `SessionDetailView`. Introduced `PhotosSaveAction` for the Photos `.addOnly` permission request and atomic batch-add. Extended `SessionStore` with `allSessions`, `saveSession`, `discardSession`, and `rotateToNewSession`. Extracted the Settings tab body into `SettingsView` and wired `ContentView` to use it.
+- Files modified/added:
+  - `TimelapseX/Data/Session/SessionStore.swift` — added `allSessions`, lifecycle mutations, fixed `PersistedSession` to round-trip `photosAlbumIdentifier`.
+  - `TimelapseX/Features/Gallery/GalleryView.swift` (new) — session list with lazy thumbnails.
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift` (new) — thumbnail grid and Save/Discard action bar.
+  - `TimelapseX/Features/Gallery/PhotosSaveAction.swift` (new) — Photos permission + batch album write.
+  - `TimelapseX/Features/Settings/SettingsView.swift` (new) — Settings tab extracted from ContentView.
+  - `TimelapseX/Features/ContentView.swift` — swapped inline `settingsTab` for `SettingsView`.
+- Possible breakpoints: `NSPhotoLibraryAddUsageDescription` must be present in the Xcode target's Info tab for the Photos permission sheet to appear; the app will crash at runtime without it. The `performChanges` album-add relies on fetching the collection by its placeholder identifier in the same change block — if Photos defers index updates, the asset add may silently no-op; smoke-test on device.
+- Edge cases: Session folder deleted between `allSessions` load and `SessionDetailView` open (handled by empty-state guard). Discard of the active session immediately rotates to a new one — confirm a fresh active session appears after navigating back.
+- Suggested manual tests: Build and run. Capture frames. Open Settings → Gallery row, verify thumbnail and frame count. Tap the row, verify thumbnail grid. Tap Save, confirm Photos permission sheet appears, confirm album exists in Photos, confirm "Saved" badge appears. Navigate back and confirm a new active session is shown. Capture again, open detail, Discard, confirm alert, confirm session disappears and a new active session starts. Verify tab bar is always visible throughout all navigation.
