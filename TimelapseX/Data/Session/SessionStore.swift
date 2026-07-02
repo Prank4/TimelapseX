@@ -15,6 +15,7 @@ final class SessionStore: ObservableObject {
         .appendingPathComponent("Sessions", isDirectory: true)
 
     @Published private(set) var activeSession: SessionRecord
+    @Published private(set) var allSessions: [SessionRecord] = []
     @Published private(set) var lastWriteErrorMessage: String?
 
     private let fileManager: FileManager
@@ -41,7 +42,11 @@ final class SessionStore: ObservableObject {
             try? Self.ensureSessionFolder(self.activeSession, using: fileManager)
             try? Self.persistSession(self.activeSession, using: fileManager, encoder: encoder)
         }
+
+        self.allSessions = (try? Self.loadAllSessions(using: fileManager, decoder: decoder)) ?? []
     }
+
+    // MARK: - Capture
 
     func noteCaptureSuccess(sequenceNumber: Int, capturedAt: Date, imageData: Data) throws {
         try writeCapture(sequenceNumber: sequenceNumber, capturedAt: capturedAt, imageData: imageData, outcome: .success, errorDescription: nil)
@@ -77,10 +82,55 @@ final class SessionStore: ObservableObject {
 
         activeSession.nextSequence += 1
         try Self.persistSession(activeSession, using: fileManager, encoder: encoder)
+        refreshAllSessions()
     }
 
     func captureURL(for sequenceNumber: Int) -> URL {
         activeSession.folderURL.appendingPathComponent(String(format: "IMG_%06d.jpg", sequenceNumber))
+    }
+
+    // MARK: - Session Lifecycle
+
+    /// Marks `session` as `.saved`, stores the Photos album identifier, persists the record,
+    /// and immediately rotates to a fresh active session.
+    func saveSession(_ session: SessionRecord, albumIdentifier: String) throws {
+        var updated = session
+        updated.status = .saved
+        updated.photosAlbumIdentifier = albumIdentifier
+        try Self.persistSession(updated, using: fileManager, encoder: encoder)
+        if updated.id == activeSession.id {
+            try rotateToNewSession()
+        } else {
+            refreshAllSessions()
+        }
+    }
+
+    /// Deletes the session folder from disk. If it was the active session, rotates to a new one.
+    func discardSession(_ session: SessionRecord) throws {
+        if fileManager.fileExists(atPath: session.folderURL.path) {
+            try fileManager.removeItem(at: session.folderURL)
+        }
+        if session.id == activeSession.id {
+            try rotateToNewSession()
+        } else {
+            refreshAllSessions()
+        }
+    }
+
+    /// Creates a new active session, persists it, and refreshes `allSessions`.
+    func rotateToNewSession() throws {
+        let newSession = Self.makeNewSession()
+        try Self.prepareSessionsDirectory(using: fileManager)
+        try Self.ensureSessionFolder(newSession, using: fileManager)
+        try Self.persistSession(newSession, using: fileManager, encoder: encoder)
+        activeSession = newSession
+        refreshAllSessions()
+    }
+
+    // MARK: - Private helpers
+
+    private func refreshAllSessions() {
+        allSessions = (try? Self.loadAllSessions(using: fileManager, decoder: decoder)) ?? []
     }
 
     private static func prepareSessionsDirectory(using fileManager: FileManager) throws {
@@ -125,12 +175,32 @@ final class SessionStore: ObservableObject {
         return makeNewSession()
     }
 
+    static func loadAllSessions(using fileManager: FileManager, decoder: JSONDecoder) throws -> [SessionRecord] {
+        let contents = try fileManager.contentsOfDirectory(
+            at: sharedSessionsDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+
+        var sessions: [SessionRecord] = []
+        for folderURL in contents {
+            let sessionJSONURL = folderURL.appendingPathComponent("session.json")
+            guard fileManager.fileExists(atPath: sessionJSONURL.path) else { continue }
+            guard let data = try? Data(contentsOf: sessionJSONURL),
+                  let session = try? decoder.decode(SessionRecord.self, from: data) else { continue }
+            sessions.append(session)
+        }
+
+        return sessions.sorted { $0.createdAt > $1.createdAt }
+    }
+
     private static func persistSession(_ session: SessionRecord, using fileManager: FileManager, encoder: JSONEncoder) throws {
         let persisted = PersistedSession(
             id: session.id,
             createdAt: session.createdAt,
             status: session.status,
-            nextSequence: session.nextSequence
+            nextSequence: session.nextSequence,
+            photosAlbumIdentifier: session.photosAlbumIdentifier
         )
         let data = try encoder.encode(persisted)
         try data.write(to: session.sessionJSONURL, options: .atomic)
@@ -164,4 +234,5 @@ private struct PersistedSession: Codable {
     let createdAt: Date
     let status: SessionStatus
     let nextSequence: Int
+    let photosAlbumIdentifier: String?
 }

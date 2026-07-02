@@ -18,11 +18,11 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 - [ ] Bottom tab bar shell for Camera and Settings, auto-hide on Camera and stay visible on Settings.
 
 ## 0.1.x — Gallery and Save
-- [ ] Gallery section inside Settings: list sessions with thumbnail, frame count, and date.
-- [ ] Session detail view: thumbnail grid for that session's frames.
-- [ ] Save action: create a Photos album named from the session timestamp, batch-add all frames in one `performChanges` call, request `.addOnly` permission at this point, mark the session `.saved`, and store the album identifier.
-- [ ] Discard action with confirmation: delete the session folder entirely, with no Photos interaction.
-- [ ] Auto-create a new active session immediately after Save or Discard.
+- [x] Gallery section inside Settings: list sessions with thumbnail, frame count, and date.
+- [x] Session detail view: thumbnail grid for that session's frames.
+- [x] Save action: create a Photos album named from the session timestamp, batch-add all frames in one `performChanges` call, request `.addOnly` permission at this point, mark the session `.saved`, and store the album identifier.
+- [x] Discard action with confirmation: delete the session folder entirely, with no Photos interaction.
+- [x] Auto-create a new active session immediately after Save or Discard.
 
 ## 0.2.x — Settings
 - [ ] Permissions status rows for Camera and Photos, read-only and linking out to Settings if denied.

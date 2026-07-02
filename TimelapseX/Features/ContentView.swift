@@ -20,7 +20,7 @@ struct ContentView: View {
                     Label("Camera", systemImage: "camera")
                 }
 
-            settingsTab
+            SettingsView(store: cameraViewModel.sessionStore)
                 .tag(AppTab.settings)
                 .tabItem {
                     Label("Settings", systemImage: "gearshape")
@@ -40,48 +40,6 @@ struct ContentView: View {
                 cameraViewModel.stopSession()
                 UIApplication.shared.isIdleTimerDisabled = false
             }
-        }
-    }
-
-    private var settingsTab: some View {
-        NavigationStack {
-            List {
-                Section("Permissions") {
-                    statusRow(title: "Camera", value: permissionText(for: AVCaptureDevice.authorizationStatus(for: .video)))
-                    statusRow(title: "Photos", value: "Deferred until Save")
-                }
-
-                Section("Session") {
-                    statusRow(title: "Active Session", value: cameraViewModel.sessionStore.activeSession.id)
-                    statusRow(title: "Next Frame", value: "\(cameraViewModel.sessionStore.activeSession.nextSequence)")
-                    statusRow(title: "Stored Frames", value: "\(cameraViewModel.sessionStore.activeSession.frameCount)")
-                }
-            }
-            .navigationTitle("Settings")
-        }
-    }
-
-    private func statusRow(title: String, value: String) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(value)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func permissionText(for status: AVAuthorizationStatus) -> String {
-        switch status {
-        case .authorized:
-            return "Authorized"
-        case .denied:
-            return "Denied"
-        case .restricted:
-            return "Restricted"
-        case .notDetermined:
-            return "Not Determined"
-        @unknown default:
-            return "Unknown"
         }
     }
 
