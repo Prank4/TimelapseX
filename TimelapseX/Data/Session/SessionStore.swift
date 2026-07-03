@@ -9,7 +9,7 @@ import Foundation
 import Combine
 
 final class SessionStore: ObservableObject {
-    static let sharedSessionsDirectory = FileManager.default
+    nonisolated static let sharedSessionsDirectory = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)
         .first!
         .appendingPathComponent("Sessions", isDirectory: true)

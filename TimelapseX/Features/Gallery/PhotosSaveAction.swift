@@ -7,9 +7,9 @@
 
 import Foundation
 import Photos
+import UIKit
 import Combine
 
-/// Encapsulates the Photos `.addOnly` permission request and atomic batch-save for a session.
 @MainActor
 final class PhotosSaveAction: ObservableObject {
     enum SaveState: Equatable {
@@ -20,7 +20,6 @@ final class PhotosSaveAction: ObservableObject {
     }
 
     @Published private(set) var state: SaveState = .idle
-
     private let store: SessionStore
 
     init(store: SessionStore) {
@@ -31,86 +30,57 @@ final class PhotosSaveAction: ObservableObject {
         guard state != .saving else { return }
         state = .saving
 
-        // 1. Request .addOnly permission
+        // 1. Request permission on main actor.
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else {
-            state = .failed("Photos access was denied. Go to Settings → Privacy → Photos to allow access.")
+        guard status == .authorized else {
+            state = .failed("Photos access was denied. Open Settings → Privacy → Photos.")
             return
         }
 
-        // 2. Collect all frame URLs for this session
-        let frameURLs = frameURLs(for: session)
-        guard !frameURLs.isEmpty else {
+        // 2. Collect frame URLs on main actor.
+        let urls = frameURLs(for: session)
+        guard !urls.isEmpty else {
             state = .failed("No frames found in this session.")
             return
         }
 
-        // 3. Batch-add all frames in one performChanges block
-        var albumIdentifier: String?
-        var saveError: Error?
-
-        do {
-            try await PHPhotoLibrary.shared().performChanges {
-                // Create album
-                let albumRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(
-                    withTitle: "TimelapseX \(session.id)"
-                )
-                let albumPlaceholder = albumRequest.placeholderForCreatedAssetCollection
-                albumIdentifier = albumPlaceholder.localIdentifier
-
-                // Add frames
-                var assetPlaceholders: [PHObjectPlaceholder] = []
-                for url in frameURLs {
-                    let assetRequest = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
-                    if let placeholder = assetRequest?.placeholderForCreatedAsset {
-                        assetPlaceholders.append(placeholder)
+        // 3. Save each image to Camera Roll on a background thread.
+        //    Using performChangesAndWait (synchronous, non-escaping closure)
+        //    avoids the @MainActor inference issue that caused the crash.
+        let outcome: Result<Void, Error> = await Task.detached(priority: .userInitiated) {
+            do {
+                for url in urls {
+                    guard let image = UIImage(contentsOfFile: url.path),
+                          let data = image.jpegData(compressionQuality: 1.0) else { continue }
+                    try PHPhotoLibrary.shared().performChangesAndWait {
+                        let req = PHAssetCreationRequest.forAsset()
+                        req.addResource(with: .photo, data: data, options: nil)
                     }
                 }
-
-                // Add assets to album
-                let fetchResult = PHAssetCollection.fetchAssetCollections(
-                    withLocalIdentifiers: [albumPlaceholder.localIdentifier],
-                    options: nil
-                )
-                if let collection = fetchResult.firstObject,
-                   let addRequest = PHAssetCollectionChangeRequest(for: collection) {
-                    addRequest.addAssets(assetPlaceholders as NSFastEnumeration)
-                }
+                return .success(())
+            } catch {
+                return .failure(error)
             }
-        } catch {
-            saveError = error
-        }
+        }.value
 
-        if let saveError {
-            state = .failed(saveError.localizedDescription)
-            return
-        }
-
-        guard let identifier = albumIdentifier else {
-            state = .failed("Could not retrieve album identifier after save.")
-            return
-        }
-
-        // 4. Mark session as saved in the store
-        do {
-            try store.saveSession(session, albumIdentifier: identifier)
-            state = .success
-        } catch {
+        switch outcome {
+        case .success:
+            do {
+                try store.saveSession(session, albumIdentifier: "camera-roll")
+                state = .success
+            } catch {
+                state = .failed(error.localizedDescription)
+            }
+        case .failure(let error):
             state = .failed(error.localizedDescription)
         }
     }
 
-    func reset() {
-        state = .idle
-    }
-
-    // MARK: - Private
+    func reset() { state = .idle }
 
     private func frameURLs(for session: SessionRecord) -> [URL] {
         let contents = (try? FileManager.default.contentsOfDirectory(
-            at: session.folderURL,
-            includingPropertiesForKeys: nil
-        )) ?? []
+            at: session.folderURL, includingPropertiesForKeys: nil)) ?? []
         return contents
             .filter { $0.lastPathComponent.hasPrefix("IMG_") && $0.pathExtension.lowercased() == "jpg" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
@@ -118,14 +88,11 @@ final class PhotosSaveAction: ObservableObject {
 }
 
 extension PhotosSaveAction.SaveState {
-    static func ==(lhs: PhotosSaveAction.SaveState, rhs: PhotosSaveAction.SaveState) -> Bool {
+    static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
-        case (.idle, .idle), (.saving, .saving), (.success, .success):
-            return true
-        case let (.failed(a), .failed(b)):
-            return a == b
-        default:
-            return false
+        case (.idle, .idle), (.saving, .saving), (.success, .success): return true
+        case let (.failed(a), .failed(b)): return a == b
+        default: return false
         }
     }
 }

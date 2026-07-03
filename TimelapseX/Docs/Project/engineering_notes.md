@@ -76,3 +76,31 @@ Implementation notes and handoff history for the current project snapshot.
 - Possible breakpoints: Live swap of device input can fail if hardware is restricted or unavailable (safe-guarded in `bestCameraDevice`).
 - Edge cases: Changing lens override drops both locks dynamically in store and reflects in the UI (verified lock flags set to false).
 - Suggested manual tests: Toggle Lens Override, verify changes live without restarting. Toggle Grid Overlay, verify grid lines appear on preview screen. Test locking/unlocking Focus & Exposure and White Balance lock. Open denied permission rows to verify they deep link to the System Settings app.
+
+## 0.3.x — Timelapse Export
+- Approach summary: Created `TimelapseExporter` utilizing the `AVAssetWriter` and `AVAssetWriterInputPixelBufferAdaptor` video processing pipeline to convert session JPEGs to H.264 `timelapse.mp4` at native resolutions. Combined this with Photos frameworks using `creationRequestForAssetFromVideo` to insert the video directly into the existing Photos album identifier. Extended `SessionDetailView` with FPS Picker control, linear progress bar feedback, and validation flows (prompting the user to save to Photos first before allowing export).
+- Files modified/added:
+  - `TimelapseX/Features/Gallery/TimelapseExporter.swift` (new) — background thread video compiler and Photos album injector.
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift` — added segmented FPS picker, linear progress bar, and prompt-to-save alerts.
+- Possible breakpoints: Conversion of large native resolutions into pixel buffers can consume significant transient memory (mitigated by using `Task.detached` and manual address unlocking).
+- Edge cases: Empty sessions or missing file URLs (guarded and exits with friendly error description).
+- Suggested manual tests: Open an active session with frames, click "Create Timelapse", verify "Save Session First" alert triggers, click "Save to Photos", then export at 12/24/30/60 FPS. Verify progress bar works, and check the Photos album to confirm the H.264 video exists in the same album.
+
+## 0.0.0 — Concurrency & Photos Save Crash Fix
+- Approach summary: Resolved Photos save crash and video export 3302 error on iOS 27 beta.
+  1. Stripped custom album creation logic entirely. Now saves all captured frames directly to the user's primary Camera Roll (All Photos) using a synchronous `performChangesAndWait` loop inside a detached task (`Task.detached`), avoiding main actor deadlock completely.
+  2. Bypassed PhotoKit media import entirely for the exported video to resolve the persistent `invalidResource` error 3302. `TimelapseExporter` now compiles the timelapse video and saves it directly to the session's local folder in the app sandbox (`session.folderURL/timelapse.mp4`).
+  3. Integrated a native SwiftUI `ShareLink` inside `SessionDetailView`'s export section which appears once the video file is present on disk.
+  4. Resolved sandbox share restrictions where the system share sheet (`sharingd` daemon) lacks access to private app folders (like `Library/Application Support`). We copy the video file to the system temporary directory (`NSTemporaryDirectory()`) right before sharing, allowing the user to successfully save it to Photos or Files.
+  5. Fixed all remaining Swift Concurrency warnings by marking computed properties in `SessionRecord` and `SessionStore`, and stateless utility methods in `TimelapseExporter`, as `nonisolated`.
+- Files modified:
+  - `TimelapseX/Features/Gallery/PhotosSaveAction.swift`
+  - `TimelapseX/Features/Gallery/TimelapseExporter.swift`
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift`
+  - `TimelapseX/Data/Session/SessionRecord.swift`
+  - `TimelapseX/Data/Session/SessionStore.swift`
+- Possible breakpoints: None. All Swift Concurrency compiler warnings are now resolved.
+- Edge cases: Real device sandbox permissions under iOS 27 beta debugger attach.
+- Suggested manual tests: Build and run. Capture frames, open Gallery, click "Save to Photos". Export timelapse, verify "Success" alert, verify "Share Timelapse" button appears, click it and select "Save Video", then verify the video is successfully saved to your Photos library.
+
+

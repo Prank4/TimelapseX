@@ -6,15 +6,31 @@
 //
 
 import SwiftUI
+import Combine
+import Photos
 
 struct SessionDetailView: View {
     let session: SessionRecord
     @ObservedObject var store: SessionStore
 
     @StateObject private var saveAction: PhotosSaveAction
+    @StateObject private var exporter = TimelapseExporter()
+
+    @State private var selectedFPS = 24
     @State private var showDiscardConfirm = false
+    @State private var showSaveFirstAlert = false
+    @State private var showExportSuccessAlert = false
+    @State private var showExportErrorAlert = false
+    
     @State private var discardError: String?
+    @State private var exportErrorMessage = ""
     @State private var frameURLs: [URL] = []
+    @State private var exportedVideoURL: URL?
+    @State private var videoSaveState: VideoSaveState = .idle
+
+    enum VideoSaveState: Equatable {
+        case idle, saving, success, failed(String)
+    }
 
     private let columns = [
         GridItem(.flexible(), spacing: 2),
@@ -36,6 +52,13 @@ struct SessionDetailView: View {
                     .padding(.horizontal)
                     .padding(.top, 16)
                     .padding(.bottom, 20)
+
+                // Timelapse Export Section (only shown when session has frames)
+                if !frameURLs.isEmpty {
+                    timelapseExportSection
+                        .padding(.horizontal)
+                        .padding(.bottom, 20)
+                }
 
                 if frameURLs.isEmpty {
                     emptyState
@@ -68,9 +91,62 @@ struct SessionDetailView: View {
         } message: {
             Text(discardError ?? "")
         }
-        .onAppear { loadFrameURLs() }
-        // Re-read the session from the store so status updates (e.g. after Save) reflect live
-        .onChange(of: store.allSessions) { _, _ in loadFrameURLs() }
+        .alert("Save Session First", isPresented: $showSaveFirstAlert) {
+            Button("Save to Photos") {
+                Task {
+                    let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+                    await saveAction.save(session: liveSession)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This session must be saved to Photos before you can export a timelapse. Would you like to save it now?")
+        }
+        .alert("Success", isPresented: $showExportSuccessAlert) {
+            Button("OK", role: .cancel) { exporter.reset() }
+        } message: {
+            Text("Timelapse video compiled successfully at native resolution.")
+        }
+        .alert("Export Failed", isPresented: $showExportErrorAlert) {
+            Button("OK", role: .cancel) { exporter.reset() }
+        } message: {
+            Text(exportErrorMessage)
+        }
+        .alert("Save Failed", isPresented: Binding(
+            get: {
+                if case .failed = saveAction.state { return true }
+                return false
+            },
+            set: { _ in saveAction.reset() }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if case .failed(let message) = saveAction.state {
+                Text(message)
+            } else {
+                Text("An unknown error occurred.")
+            }
+        }
+        .onAppear {
+            loadFrameURLs()
+            checkExportedVideo()
+        }
+        .onChange(of: store.allSessions) { _, _ in
+            loadFrameURLs()
+            checkExportedVideo()
+        }
+        .onChange(of: exporter.state) { _, newValue in
+            switch newValue {
+            case .success:
+                checkExportedVideo()
+                showExportSuccessAlert = true
+            case .failed(let message):
+                exportErrorMessage = message
+                showExportErrorAlert = true
+            default:
+                break
+            }
+        }
     }
 
     // MARK: - Subviews
@@ -94,7 +170,6 @@ struct SessionDetailView: View {
 
     private var statusBadge: some View {
         let (label, color): (String, Color) = {
-            // Read the live status from the store, fall back to the snapshot
             let live = store.allSessions.first(where: { $0.id == session.id })?.status ?? session.status
             switch live {
             case .active:    return ("Active", .blue)
@@ -109,6 +184,91 @@ struct SessionDetailView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .background(color.opacity(0.12), in: Capsule())
+    }
+
+    private var timelapseExportSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Timelapse Export")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("FPS (Frames Per Second)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("FPS", selection: $selectedFPS) {
+                    Text("12").tag(12)
+                    Text("24").tag(24)
+                    Text("30").tag(30)
+                    Text("60").tag(60)
+                }
+                .pickerStyle(.segmented)
+                .disabled(isExporting)
+            }
+
+            Button(action: handleExportTap) {
+                Group {
+                    if case .exporting(let progress) = exporter.state {
+                        HStack(spacing: 12) {
+                            ProgressView(value: progress)
+                                .progressViewStyle(.linear)
+                                .tint(.white)
+                            Text("\(Int(progress * 100))%")
+                                .font(.caption.weight(.semibold))
+                        }
+                    } else {
+                        Text("Create Timelapse")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isExporting)
+
+            if let exportedVideoURL {
+                HStack(spacing: 10) {
+                    // Save directly to Photos from our app (more reliable than share sheet Save Video)
+                    Button {
+                        Task { await saveVideoToPhotos(url: exportedVideoURL) }
+                    } label: {
+                        Group {
+                            if videoSaveState == .saving {
+                                ProgressView().tint(.white)
+                            } else if videoSaveState == .success {
+                                Label("Saved!", systemImage: "checkmark")
+                            } else {
+                                Label("Save to Photos", systemImage: "square.and.arrow.down")
+                            }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(videoSaveState == .success ? .green : .blue)
+                    .disabled(videoSaveState == .saving || videoSaveState == .success)
+
+                    ShareLink(item: exportedVideoURL) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(width: 44, height: 36)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.secondary)
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(.systemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var isExporting: Bool {
+        if case .exporting = exporter.state {
+            return true
+        }
+        return false
     }
 
     private var emptyState: some View {
@@ -141,6 +301,7 @@ struct SessionDetailView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(.red)
+                    .disabled(isExporting)
 
                     // Save
                     Button {
@@ -156,7 +317,7 @@ struct SessionDetailView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(saveAction.state == .saving)
+                    .disabled(saveAction.state == .saving || isExporting)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
@@ -181,6 +342,17 @@ struct SessionDetailView: View {
 
     // MARK: - Actions
 
+    private func handleExportTap() {
+        let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+        if liveSession.status != .saved {
+            showSaveFirstAlert = true
+        } else {
+            Task {
+                await exporter.export(session: liveSession, fps: selectedFPS)
+            }
+        }
+    }
+
     private func performDiscard() {
         do {
             try store.discardSession(session)
@@ -200,6 +372,65 @@ struct SessionDetailView: View {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
+    private func checkExportedVideo() {
+        let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+        let sourceURL = liveSession.folderURL.appendingPathComponent("timelapse.mp4")
+        if FileManager.default.fileExists(atPath: sourceURL.path) {
+            let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            let destURL = tempDir.appendingPathComponent("\(session.id)_timelapse.mp4")
+            try? FileManager.default.removeItem(at: destURL)
+            do {
+                try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                exportedVideoURL = destURL
+            } catch {
+                exportedVideoURL = sourceURL
+            }
+        } else {
+            exportedVideoURL = nil
+        }
+    }
+
+    private func saveVideoToPhotos(url: URL) async {
+        guard videoSaveState == .idle else { return }
+        videoSaveState = .saving
+
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            videoSaveState = .failed("Video file not found at expected path.")
+            return
+        }
+
+        // Re-check permission.
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized else {
+            videoSaveState = .failed("Photos access denied.")
+            return
+        }
+
+        let result: Result<Void, Error> = await Task.detached(priority: .userInitiated) {
+            do {
+                // Use the same modern API that works for photos — addResource with .video type.
+                // PHAssetChangeRequest.creationRequestForAssetFromVideo is legacy and unreliable
+                // on iOS 27 beta.
+                try PHPhotoLibrary.shared().performChangesAndWait {
+                    let req = PHAssetCreationRequest.forAsset()
+                    let opts = PHAssetResourceCreationOptions()
+                    opts.shouldMoveFile = false
+                    req.addResource(with: .video, fileURL: url, options: opts)
+                }
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }.value
+
+        switch result {
+        case .success:
+            videoSaveState = .success
+        case .failure(let error):
+            videoSaveState = .failed(error.localizedDescription)
+        }
+    }
+ 
     private var formattedDate: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
