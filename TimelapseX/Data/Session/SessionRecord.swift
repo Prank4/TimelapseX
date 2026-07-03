@@ -14,10 +14,10 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var nextSequence: Int
     var photosAlbumIdentifier: String?
 
-    var folderName: String { id }
-    var folderURL: URL { Self.sessionsDirectory.appendingPathComponent(folderName, isDirectory: true) }
-    var sessionJSONURL: URL { folderURL.appendingPathComponent("session.json") }
-    var captureLogURL: URL { folderURL.appendingPathComponent("capture_log.txt") }
+    nonisolated var folderName: String { id }
+    nonisolated var folderURL: URL { Self.sessionsDirectory.appendingPathComponent(folderName, isDirectory: true) }
+    nonisolated var sessionJSONURL: URL { folderURL.appendingPathComponent("session.json") }
+    nonisolated var captureLogURL: URL { folderURL.appendingPathComponent("capture_log.txt") }
 
     var frameCount: Int {
         let contents = (try? FileManager.default.contentsOfDirectory(
@@ -28,7 +28,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         return contents.filter { $0.lastPathComponent.hasPrefix("IMG_") && $0.pathExtension.lowercased() == "jpg" }.count
     }
 
-    static var sessionsDirectory: URL {
+    nonisolated static var sessionsDirectory: URL {
         SessionStore.sharedSessionsDirectory
     }
 }
