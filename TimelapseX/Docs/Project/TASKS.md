@@ -8,8 +8,8 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 ## 0.0.x — Camera Core
 - [ ] Camera session: widest available lens, max photo dimensions, `.quality` prioritization, flash off, continuous AF/AE/AWB.
 - [ ] Full-screen preview with portrait locked.
-- [ ] Capture on volume-up press, with an `isCapturing` guard for single-shot behavior.
-- [ ] No on-screen shutter button; follow the Apple Camera app volume-up capture pattern.
+- [ ] Capture on volume-button press, with an `isCapturing` guard for single-shot behavior.
+- [ ] No on-screen shutter button; follow the Apple Camera app hardware-button capture pattern.
 - [ ] `Session` model: auto-create an active session on launch; per-session folder and sequence counter in `session.json`.
 - [ ] Save each capture locally only in `Sessions/{id}/IMG_xxxxxx.jpg`.
 - [ ] Per-session capture log in `capture_log.txt`.
@@ -41,11 +41,20 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 - [x] Add the resulting video into the session's existing Photos album, not a new album.
 - [x] If the session is not yet saved, prompt to save first instead of allowing export.
 
+## 0.4.x — Gallery Delete, Timelapse Settings, and Capture Hotfix
+- [x] Gallery session delete from the session detail view, with confirmation.
+- [x] More timelapse settings beyond FPS.
+- [x] Volume-down button also captures images.
+- [x] Capture should fire again immediately after button release, with no re-trigger delay between presses.
+
+## Hotfixes
+- [ ] Fix Save to Photos so saved sessions reliably appear in Photos again.
+
 ## Validation
-Run after 0.0.x and again after 0.3.x.
+Run after 0.0.x and again after 0.4.x.
 
 - [ ] Real Bluetooth remote and real printer trigger: confirm latency and single-shot behavior.
-- [ ] Volume-up capture trigger: confirm the app captures on press and does not require a shutter button.
+- [ ] Volume-button capture trigger: confirm the app captures on press and does not require a shutter button.
 - [ ] Multi-hour soak test: verify per-session numbering, no memory growth, and idle timer behavior.
 - [ ] Frame count on disk equals log success count and expected shutter presses for a full session.
 - [ ] Save flow: confirm the album contains exactly the session's frames, with no partial or duplicate uploads after a forced-quit retry.

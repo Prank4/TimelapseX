@@ -13,10 +13,11 @@ struct SessionDetailView: View {
     let session: SessionRecord
     @ObservedObject var store: SessionStore
 
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var saveAction: PhotosSaveAction
     @StateObject private var exporter = TimelapseExporter()
 
-    @State private var selectedFPS = 24
+    @State private var exportSettings = TimelapseExportSettings()
     @State private var showDiscardConfirm = false
     @State private var showSaveFirstAlert = false
     @State private var showExportSuccessAlert = false
@@ -45,15 +46,91 @@ struct SessionDetailView: View {
     }
 
     var body: some View {
+        mainContent
+            .safeAreaInset(edge: .bottom) {
+                actionBar
+            }
+            .navigationTitle(session.id)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.visible, for: .tabBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) {
+                        showDiscardConfirm = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .disabled(isExporting)
+                }
+            }
+            .alert("Delete Session?", isPresented: $showDiscardConfirm) {
+                Button("Delete", role: .destructive) { performDiscard() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("All \(frameURLs.count) frame\(frameURLs.count == 1 ? "" : "s") will be permanently deleted. This cannot be undone.")
+            }
+            .alert("Error", isPresented: Binding(get: { discardError != nil }, set: { if !$0 { discardError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(discardError ?? "")
+            }
+            .alert("Save Session First", isPresented: $showSaveFirstAlert) {
+                Button("Save to Photos") {
+                    Task {
+                        let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+                        await saveAction.save(session: liveSession)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This session must be saved to Photos before you can export a timelapse. Would you like to save it now?")
+            }
+            .alert("Success", isPresented: $showExportSuccessAlert) {
+                Button("OK", role: .cancel) { exporter.reset() }
+            } message: {
+                Text("Timelapse video compiled successfully at native resolution.")
+            }
+            .alert("Export Failed", isPresented: $showExportErrorAlert) {
+                Button("OK", role: .cancel) { exporter.reset() }
+            } message: {
+                Text(exportErrorMessage)
+            }
+            .alert("Save Failed", isPresented: Binding(
+                get: {
+                    if case .failed = saveAction.state { return true }
+                    return false
+                },
+                set: { _ in saveAction.reset() }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                if case .failed(let message) = saveAction.state {
+                    Text(message)
+                } else {
+                    Text("An unknown error occurred.")
+                }
+            }
+            .onAppear {
+                loadFrameURLs()
+                checkExportedVideo()
+            }
+            .onChange(of: store.allSessions) { _, _ in
+                loadFrameURLs()
+                checkExportedVideo()
+            }
+            .onChange(of: exporter.state) { _, newValue in
+                handleExporterStateChange(newValue)
+            }
+    }
+
+    private var mainContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // Header card
                 sessionHeader
                     .padding(.horizontal)
                     .padding(.top, 16)
                     .padding(.bottom, 20)
 
-                // Timelapse Export Section (only shown when session has frames)
                 if !frameURLs.isEmpty {
                     timelapseExportSection
                         .padding(.horizontal)
@@ -63,93 +140,23 @@ struct SessionDetailView: View {
                 if frameURLs.isEmpty {
                     emptyState
                 } else {
-                    // Thumbnail grid
-                    LazyVGrid(columns: columns, spacing: 2) {
-                        ForEach(frameURLs, id: \.self) { url in
-                            FrameThumbnail(url: url)
-                                .aspectRatio(1, contentMode: .fill)
-                                .clipped()
-                        }
-                    }
+                    framesGrid
                 }
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            actionBar
-        }
-        .navigationTitle(session.id)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .tabBar)
-        .alert("Discard Session?", isPresented: $showDiscardConfirm) {
-            Button("Discard", role: .destructive) { performDiscard() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("All \(frameURLs.count) frame\(frameURLs.count == 1 ? "" : "s") will be permanently deleted. This cannot be undone.")
-        }
-        .alert("Error", isPresented: Binding(get: { discardError != nil }, set: { if !$0 { discardError = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(discardError ?? "")
-        }
-        .alert("Save Session First", isPresented: $showSaveFirstAlert) {
-            Button("Save to Photos") {
-                Task {
-                    let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
-                    await saveAction.save(session: liveSession)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This session must be saved to Photos before you can export a timelapse. Would you like to save it now?")
-        }
-        .alert("Success", isPresented: $showExportSuccessAlert) {
-            Button("OK", role: .cancel) { exporter.reset() }
-        } message: {
-            Text("Timelapse video compiled successfully at native resolution.")
-        }
-        .alert("Export Failed", isPresented: $showExportErrorAlert) {
-            Button("OK", role: .cancel) { exporter.reset() }
-        } message: {
-            Text(exportErrorMessage)
-        }
-        .alert("Save Failed", isPresented: Binding(
-            get: {
-                if case .failed = saveAction.state { return true }
-                return false
-            },
-            set: { _ in saveAction.reset() }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            if case .failed(let message) = saveAction.state {
-                Text(message)
-            } else {
-                Text("An unknown error occurred.")
-            }
-        }
-        .onAppear {
-            loadFrameURLs()
-            checkExportedVideo()
-        }
-        .onChange(of: store.allSessions) { _, _ in
-            loadFrameURLs()
-            checkExportedVideo()
-        }
-        .onChange(of: exporter.state) { _, newValue in
-            switch newValue {
-            case .success:
-                checkExportedVideo()
-                showExportSuccessAlert = true
-            case .failed(let message):
-                exportErrorMessage = message
-                showExportErrorAlert = true
-            default:
-                break
             }
         }
     }
 
     // MARK: - Subviews
+
+    private var framesGrid: some View {
+        LazyVGrid(columns: columns, spacing: 2) {
+            ForEach(frameURLs, id: \.absoluteString) { url in
+                FrameThumbnail(url: url)
+                    .aspectRatio(1, contentMode: .fill)
+                    .clipped()
+            }
+        }
+    }
 
     private var sessionHeader: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -192,14 +199,40 @@ struct SessionDetailView: View {
                 .font(.headline)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("FPS (Frames Per Second)")
+                Text("FPS")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Picker("FPS", selection: $selectedFPS) {
+                Picker("FPS", selection: $exportSettings.fps) {
                     Text("12").tag(12)
                     Text("24").tag(24)
                     Text("30").tag(30)
                     Text("60").tag(60)
+                }
+                .pickerStyle(.segmented)
+                .disabled(isExporting)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Resolution")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Resolution", selection: $exportSettings.resolution) {
+                    ForEach(TimelapseResolution.allCases) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(isExporting)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Quality")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Quality", selection: $exportSettings.quality) {
+                    ForEach(TimelapseQuality.allCases) { option in
+                        Text(option.displayName).tag(option)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .disabled(isExporting)
@@ -292,11 +325,10 @@ struct SessionDetailView: View {
             VStack(spacing: 0) {
                 Divider()
                 HStack(spacing: 12) {
-                    // Discard
                     Button(role: .destructive) {
                         showDiscardConfirm = true
                     } label: {
-                        Text("Discard")
+                        Text("Delete")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -348,14 +380,29 @@ struct SessionDetailView: View {
             showSaveFirstAlert = true
         } else {
             Task {
-                await exporter.export(session: liveSession, fps: selectedFPS)
+                await exporter.export(session: liveSession, settings: exportSettings)
             }
+        }
+    }
+
+    private func handleExporterStateChange(_ state: TimelapseExporter.ExportState) {
+        switch state {
+        case .success:
+            checkExportedVideo()
+            showExportSuccessAlert = true
+        case .failed(let message):
+            exportErrorMessage = message
+            showExportErrorAlert = true
+        default:
+            break
         }
     }
 
     private func performDiscard() {
         do {
-            try store.discardSession(session)
+            let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+            try store.discardSession(liveSession)
+            dismiss()
         } catch {
             discardError = error.localizedDescription
         }

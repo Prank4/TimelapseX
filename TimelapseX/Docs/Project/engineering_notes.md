@@ -6,14 +6,14 @@ Implementation notes and handoff history for the current project snapshot.
 ## Current Decisions
 - iOS 26.0+ only.
 - SwiftUI app with a two-tab shell: Camera and Settings.
-- No on-screen shutter button; capture is triggered by the hardware volume-up button, matching the Apple Camera app pattern.
+- No on-screen shutter button; capture is triggered by the hardware volume buttons, matching the Apple Camera app pattern.
 - Exactly one active session exists at a time.
 - Captures are stored locally first; Photos is only involved during Save and export flows.
 - Lens changes automatically drop exposure, focus, and white balance locks back to continuous mode.
 
 ## Implementation Notes
 - Keep capture sequencing per session, with numbering reset when a new session starts.
-- Keep capture tied to volume-up press so the UI stays uncluttered.
+- Keep capture tied to volume-button presses so the UI stays uncluttered.
 - Keep grid overlay UI-only so it never changes the saved JPEG output.
 - Save should batch all frames into the session's Photos album in one atomic pass.
 - Timelapse export should reuse the saved session's existing album instead of creating a second one.
@@ -47,7 +47,7 @@ Implementation notes and handoff history for the current project snapshot.
   - `TimelapseX/Features/Camera/VolumeButtonCaptureView.swift`
 - Possible breakpoints: Missing framework imports (e.g. `Combine`, `AVFoundation`) in the newly split files. (Verified all imports are correct and compiles clean).
 - Edge cases: Missing compiler references in Xcode project. (Synchronized automatically due to `PBXFileSystemSynchronizedRootGroup`).
-- Suggested manual tests: Clean build and run on device/simulator. Switch between Camera and Settings tabs. Confirm volume-up hardware trigger captures frames and logs them properly to `Sessions/`.
+- Suggested manual tests: Clean build and run on device/simulator. Switch between Camera and Settings tabs. Confirm volume-button hardware trigger captures frames and logs them properly to `Sessions/`.
 
 ## 0.0.0 — Tab Bar Visibility Fix
 - Approach summary: Added `.toolbar(.visible, for: .tabBar)` modifier to the `List` inside the `NavigationStack` of the `settingsTab` in `ContentView.swift`. (Placing the modifier directly on the `NavigationStack` container is ignored by SwiftUI, so it was moved onto the child view to ensure the tab bar remains always visible when switching away from the auto-hiding Camera view).
@@ -103,4 +103,16 @@ Implementation notes and handoff history for the current project snapshot.
 - Edge cases: Real device sandbox permissions under iOS 27 beta debugger attach.
 - Suggested manual tests: Build and run. Capture frames, open Gallery, click "Save to Photos". Export timelapse, verify "Success" alert, verify "Share Timelapse" button appears, click it and select "Save Video", then verify the video is successfully saved to your Photos library.
 
-
+## 0.4.x — Gallery Delete, Timelapse Settings, and Capture Hotfix
+- Approach summary: Added a confirmed session delete action directly in `SessionDetailView`, expanded timelapse export with resolution and quality settings, and updated volume-button capture so both volume-up and volume-down trigger with a shorter reset window between presses.
+- Files modified:
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift`
+  - `TimelapseX/Features/Gallery/TimelapseExporter.swift`
+  - `TimelapseX/Features/Camera/VolumeButtonCaptureView.swift`
+  - `TimelapseX/Features/Camera/CameraTabView.swift`
+  - `TimelapseX/Docs/Project/TASKS.md`
+  - `TimelapseX/Docs/Project/DATA_MODEL.md`
+  - `TimelapseX/Docs/Project/MVP_SCOPE.md`
+- Possible breakpoints: Volume-button interception still depends on the hidden `MPVolumeView` and real device audio-session behavior, so simulator validation is limited.
+- Edge cases: Deleting the active session rotates immediately to a fresh session via `SessionStore.discardSession`; export resolution never upscales beyond the source image size.
+- Suggested manual tests: Capture with volume-up and volume-down on device, rapidly press/release both buttons, delete active and saved sessions from detail, export the same session at Native/1080p/720p and High/Standard/Compact quality, then verify the resulting `timelapse.mp4` dimensions and share/save flow.

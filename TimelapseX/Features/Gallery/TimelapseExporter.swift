@@ -9,6 +9,60 @@ import AVFoundation
 import Combine
 import UIKit
 
+struct TimelapseExportSettings: Equatable {
+    var fps: Int = 24
+    var resolution: TimelapseResolution = .native
+    var quality: TimelapseQuality = .high
+}
+
+enum TimelapseResolution: String, CaseIterable, Identifiable {
+    case native
+    case hd1080
+    case hd720
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var displayName: String {
+        switch self {
+        case .native: return "Native"
+        case .hd1080: return "1080p"
+        case .hd720: return "720p"
+        }
+    }
+
+    nonisolated var maximumLongEdge: Int? {
+        switch self {
+        case .native: return nil
+        case .hd1080: return 1080
+        case .hd720: return 720
+        }
+    }
+}
+
+enum TimelapseQuality: String, CaseIterable, Identifiable {
+    case high
+    case standard
+    case compact
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var displayName: String {
+        switch self {
+        case .high: return "High"
+        case .standard: return "Standard"
+        case .compact: return "Compact"
+        }
+    }
+
+    nonisolated var bitrateMultiplier: Int {
+        switch self {
+        case .high: return 10
+        case .standard: return 6
+        case .compact: return 3
+        }
+    }
+}
+
 final class TimelapseExporter: ObservableObject {
     enum ExportState: Equatable {
         case idle
@@ -20,11 +74,10 @@ final class TimelapseExporter: ObservableObject {
     @Published private(set) var state: ExportState = .idle
 
     @MainActor
-    func export(session: SessionRecord, fps: Int) async {
+    func export(session: SessionRecord, settings: TimelapseExportSettings) async {
         guard state == .idle || isResetableState else { return }
         state = .exporting(0.0)
 
-        // Run the AVAssetWriter encoding pipeline on a background Task
         let result = await Task.detached(priority: .userInitiated) { () -> Result<URL, Error> in
             do {
                 let fileManager = FileManager.default
@@ -46,8 +99,12 @@ final class TimelapseExporter: ObservableObject {
                     return .failure(NSError(domain: "TimelapseExporter", code: 102, userInfo: [NSLocalizedDescriptionKey: "Failed to read first frame."]))
                 }
 
-                let width = (cgImage.width / 2) * 2
-                let height = (cgImage.height / 2) * 2
+                let outputSize = Self.outputSize(
+                    sourceSize: CGSize(width: cgImage.width, height: cgImage.height),
+                    resolution: settings.resolution
+                )
+                let width = Int(outputSize.width)
+                let height = Int(outputSize.height)
                 let outputURL = session.folderURL.appendingPathComponent("timelapse.mp4")
 
                 if fileManager.fileExists(atPath: outputURL.path) {
@@ -58,7 +115,10 @@ final class TimelapseExporter: ObservableObject {
                 let videoSettings: [String: Any] = [
                     AVVideoCodecKey: AVVideoCodecType.h264,
                     AVVideoWidthKey: width,
-                    AVVideoHeightKey: height
+                    AVVideoHeightKey: height,
+                    AVVideoCompressionPropertiesKey: [
+                        AVVideoAverageBitRateKey: width * height * settings.quality.bitrateMultiplier
+                    ]
                 ]
 
                 let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
@@ -80,7 +140,7 @@ final class TimelapseExporter: ObservableObject {
                 assetWriter.startWriting()
                 assetWriter.startSession(atSourceTime: .zero)
 
-                let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+                let frameDuration = CMTime(value: 1, timescale: CMTimeScale(settings.fps))
                 var currentFrameIndex = 0
 
                 for url in frameURLs {
@@ -127,6 +187,11 @@ final class TimelapseExporter: ObservableObject {
         }
     }
 
+    @MainActor
+    func export(session: SessionRecord, fps: Int) async {
+        await export(session: session, settings: TimelapseExportSettings(fps: fps))
+    }
+
     func reset() {
         state = .idle
     }
@@ -141,6 +206,30 @@ final class TimelapseExporter: ObservableObject {
     @MainActor
     private func updateProgress(_ progress: Double) {
         self.state = .exporting(progress)
+    }
+
+    nonisolated private static func outputSize(sourceSize: CGSize, resolution: TimelapseResolution) -> CGSize {
+        let sourceWidth = Int(sourceSize.width)
+        let sourceHeight = Int(sourceSize.height)
+
+        guard let maximumLongEdge = resolution.maximumLongEdge else {
+            return CGSize(width: even(sourceWidth), height: even(sourceHeight))
+        }
+
+        let longEdge = max(sourceWidth, sourceHeight)
+        guard longEdge > maximumLongEdge else {
+            return CGSize(width: even(sourceWidth), height: even(sourceHeight))
+        }
+
+        let scale = CGFloat(maximumLongEdge) / CGFloat(longEdge)
+        return CGSize(
+            width: even(Int(CGFloat(sourceWidth) * scale)),
+            height: even(Int(CGFloat(sourceHeight) * scale))
+        )
+    }
+
+    nonisolated private static func even(_ value: Int) -> Int {
+        max(2, (value / 2) * 2)
     }
 
     nonisolated private static func pixelBuffer(from image: UIImage, size: CGSize) -> CVPixelBuffer? {

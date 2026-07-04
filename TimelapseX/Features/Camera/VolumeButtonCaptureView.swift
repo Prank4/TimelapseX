@@ -11,10 +11,10 @@ import SwiftUI
 import UIKit
 
 struct VolumeButtonCaptureView: UIViewRepresentable {
-    let onVolumeUp: () -> Void
+    let onVolumeButtonPress: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onVolumeUp: onVolumeUp)
+        Coordinator(onVolumeButtonPress: onVolumeButtonPress)
     }
 
     func makeUIView(context: Context) -> UIView {
@@ -24,7 +24,7 @@ struct VolumeButtonCaptureView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onVolumeUp = onVolumeUp
+        context.coordinator.onVolumeButtonPress = onVolumeButtonPress
     }
 
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
@@ -32,7 +32,7 @@ struct VolumeButtonCaptureView: UIViewRepresentable {
     }
 
     final class Coordinator {
-        var onVolumeUp: () -> Void
+        var onVolumeButtonPress: () -> Void
         private let audioSession = AVAudioSession.sharedInstance()
         private var observation: NSKeyValueObservation?
         private weak var volumeSlider: UISlider?
@@ -42,8 +42,8 @@ struct VolumeButtonCaptureView: UIViewRepresentable {
         private var foregroundObserver: NSObjectProtocol?
         private weak var containerView: UIView?
 
-        init(onVolumeUp: @escaping () -> Void) {
-            self.onVolumeUp = onVolumeUp
+        init(onVolumeButtonPress: @escaping () -> Void) {
+            self.onVolumeButtonPress = onVolumeButtonPress
         }
 
         func attach(to containerView: UIView) {
@@ -76,9 +76,9 @@ struct VolumeButtonCaptureView: UIViewRepresentable {
                     return
                 }
 
-                if newVolume > oldVolume {
+                if abs(newVolume - oldVolume) > 0.001 {
                     DispatchQueue.main.async {
-                        self.onVolumeUp()
+                        self.onVolumeButtonPress()
                     }
                 }
 
@@ -128,7 +128,7 @@ struct VolumeButtonCaptureView: UIViewRepresentable {
                 guard let volumeSlider = self.volumeSlider else { return }
                 self.isResettingVolume = true
                 volumeSlider.setValue(value, animated: false)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
                     self.isResettingVolume = false
                 }
             }

@@ -71,7 +71,7 @@ struct CameraTabView: View {
 
             HStack(spacing: 8) {
                 Image(systemName: "speaker.wave.2.fill")
-                Text("Press Volume Up to Capture")
+                Text("Press Volume Up or Down to Capture")
             }
             .font(.footnote.weight(.medium))
             .foregroundStyle(.white)
