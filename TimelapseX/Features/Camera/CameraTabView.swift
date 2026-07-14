@@ -13,15 +13,24 @@ struct CameraTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            Color.black.ignoresSafeArea()
+
             if cameraViewModel.authorizationStatus == .authorized {
+                #if targetEnvironment(simulator)
+                Color.black.ignoresSafeArea()
+                    .task {
+                        cameraViewModel.startSession()
+                        UIApplication.shared.isIdleTimerDisabled = true
+                    }
+                #else
                 CameraPreviewView(session: cameraViewModel.captureSession)
-                    .ignoresSafeArea(.container, edges: .top)
+                    .ignoresSafeArea()
                     .overlay {
                         GridOverlayView(type: cameraViewModel.settingsStore.gridOverlay)
-                            .ignoresSafeArea(.container, edges: .top)
+                            .ignoresSafeArea()
                             .allowsHitTesting(false)
                     }
-                    .onAppear {
+                    .task {
                         cameraViewModel.startSession()
                         UIApplication.shared.isIdleTimerDisabled = true
                     }
@@ -33,6 +42,7 @@ struct CameraTabView: View {
                 }
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
+                #endif
             } else {
                 Color.black.ignoresSafeArea()
                 permissionPrompt
@@ -68,6 +78,8 @@ struct CameraTabView: View {
                 .foregroundStyle(.white.opacity(0.85))
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.black.opacity(0.28), in: Capsule())
 
             HStack(spacing: 8) {
                 Image(systemName: "speaker.wave.2.fill")

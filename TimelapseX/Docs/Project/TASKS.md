@@ -37,7 +37,7 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 ## 0.3.x — Timelapse Export
 - [x] "Create Timelapse" action from a saved session's detail view.
 - [x] FPS selector segmented control: 12, 24, 30, or 60, defaulting to 24.
-- [x] `AVAssetWriter` pipeline that assembles session frames into `timelapse.mp4` at native resolution.
+- [x] `AVAssetWriter` pipeline that assembles session frames into a Photos-compatible `timelapse.mp4`.
 - [x] Add the resulting video into the session's existing Photos album, not a new album.
 - [x] If the session is not yet saved, prompt to save first instead of allowing export.
 

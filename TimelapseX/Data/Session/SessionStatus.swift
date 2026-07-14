@@ -9,6 +9,7 @@ import Foundation
 
 enum SessionStatus: String, Codable {
     case active
+    case closed
     case saved
     case discarded
 }

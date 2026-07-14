@@ -76,6 +76,7 @@ private struct GalleryRow: View {
         let (label, color): (String, Color) = {
             switch session.status {
             case .active:    return ("Active", .blue)
+            case .closed:    return ("Closed", .orange)
             case .saved:     return ("Saved", .green)
             case .discarded: return ("Discarded", .gray)
             }

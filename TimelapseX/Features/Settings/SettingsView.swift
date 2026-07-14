@@ -11,7 +11,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var store: SessionStore
-    @StateObject private var settingsStore = CameraSettingsStore.shared
+    @ObservedObject private var settingsStore = CameraSettingsStore.shared
+    @State private var sessionActionError: String?
 
     var body: some View {
         NavigationStack {
@@ -58,6 +59,20 @@ struct SettingsView: View {
                 }
 
                 Section("Capture Options") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Timed Capture", isOn: $settingsStore.intervalCaptureEnabled)
+                        Text("After the next manual frame, the camera will keep capturing every \(formattedInterval(settingsStore.intervalCaptureSeconds)).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Slider(
+                            value: $settingsStore.intervalCaptureSeconds,
+                            in: CameraSettingsStore.minimumIntervalCaptureSeconds...CameraSettingsStore.maximumIntervalCaptureSeconds,
+                            step: 0.01
+                        )
+                        .disabled(!settingsStore.intervalCaptureEnabled)
+                    }
+                    .padding(.vertical, 4)
+
                     VStack(alignment: .leading, spacing: 4) {
                         Toggle("Quality Mode", isOn: Binding(
                             get: { settingsStore.qualityMode == .bestQuality },
@@ -90,6 +105,11 @@ struct SettingsView: View {
                     statusRow(title: "Active Session", value: store.activeSession.id)
                     statusRow(title: "Next Frame", value: "\(store.activeSession.nextSequence)")
                     statusRow(title: "Stored Frames", value: "\(store.activeSession.frameCount)")
+                    Button {
+                        startNewSession()
+                    } label: {
+                        Label("Start New Session", systemImage: "plus.circle")
+                    }
                 }
 
                 Section("Gallery") {
@@ -100,6 +120,11 @@ struct SettingsView: View {
             .toolbar(.visible, for: .tabBar)
             .onAppear {
                 settingsStore.refreshPermissions()
+            }
+            .alert("Session Error", isPresented: Binding(get: { sessionActionError != nil }, set: { if !$0 { sessionActionError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(sessionActionError ?? "")
             }
         }
     }
@@ -157,6 +182,14 @@ struct SettingsView: View {
         }
     }
 
+    private func startNewSession() {
+        do {
+            try store.startNewSession()
+        } catch {
+            sessionActionError = error.localizedDescription
+        }
+    }
+
     private func statusRow(title: String, value: String) -> some View {
         HStack {
             Text(title)
@@ -164,5 +197,12 @@ struct SettingsView: View {
             Text(value)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func formattedInterval(_ seconds: Double) -> String {
+        if seconds < 1 {
+            return "\(Int((seconds * 1000).rounded())) ms"
+        }
+        return "\(String(format: "%.2f", seconds)) s"
     }
 }

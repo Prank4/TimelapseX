@@ -22,6 +22,7 @@ final class CameraViewModel: NSObject, ObservableObject {
     private let sessionQueue = DispatchQueue(label: "TimelapseX.Camera.SessionQueue")
     private let photoOutput = AVCapturePhotoOutput()
     private var pendingCaptureTimestamp: Date?
+    private var intervalCaptureTask: Task<Void, Never>?
     private var configured = false
     private var cancellables = Set<AnyCancellable>()
 
@@ -42,10 +43,37 @@ final class CameraViewModel: NSObject, ObservableObject {
                 self?.applyLocks()
             }
             .store(in: &cancellables)
+
+        settingsStore.$intervalCaptureEnabled
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isEnabled in
+                if !isEnabled {
+                    self?.stopIntervalCapture()
+                    self?.statusMessage = "Timed capture stopped"
+                }
+            }
+            .store(in: &cancellables)
+
+        settingsStore.$intervalCaptureSeconds
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.intervalCaptureTask != nil else { return }
+                self.startIntervalCapture()
+            }
+            .store(in: &cancellables)
+    }
+
+    deinit {
+        intervalCaptureTask?.cancel()
     }
 
     func refreshAuthorizationStatus() {
-        authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        let currentStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        if authorizationStatus != currentStatus {
+            authorizationStatus = currentStatus
+        }
     }
 
     func requestCameraPermissionIfNeeded() {
@@ -73,10 +101,14 @@ final class CameraViewModel: NSObject, ObservableObject {
     func startSession() {
         guard authorizationStatus == .authorized else { return }
 
+        #if targetEnvironment(simulator)
+        isRunning = false
+        statusMessage = "Camera preview unavailable in Simulator"
+        #else
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if !self.configured {
-                self.configureSession()
+                guard self.configureSession() else { return }
             }
 
             guard !self.captureSession.isRunning else { return }
@@ -86,9 +118,11 @@ final class CameraViewModel: NSObject, ObservableObject {
                 self.statusMessage = "Camera active"
             }
         }
+        #endif
     }
 
     func stopSession() {
+        stopIntervalCapture()
         sessionQueue.async { [weak self] in
             guard let self, self.captureSession.isRunning else { return }
             self.captureSession.stopRunning()
@@ -99,27 +133,81 @@ final class CameraViewModel: NSObject, ObservableObject {
     }
 
     func captureStillImage() {
+        requestCapture(shouldStartIntervalCapture: true)
+    }
+
+    private func requestCapture(shouldStartIntervalCapture: Bool) {
         guard authorizationStatus == .authorized else {
             statusMessage = "Camera permission required"
             requestCameraPermissionIfNeeded()
             return
         }
 
-        guard !isCapturing else { return }
+        #if targetEnvironment(simulator)
+        statusMessage = "Capture unavailable in Simulator"
+        #else
+        guard shouldStartIntervalCapture || settingsStore.intervalCaptureEnabled else {
+            stopIntervalCapture()
+            return
+        }
+
+        if shouldStartIntervalCapture && settingsStore.intervalCaptureEnabled {
+            startIntervalCapture()
+        }
+
+        guard !isCapturing else {
+            return
+        }
+
         isCapturing = true
         pendingCaptureTimestamp = Date()
 
         let settings = AVCapturePhotoSettings()
         settings.flashMode = .off
-        settings.isHighResolutionPhotoEnabled = true
         settings.photoQualityPrioritization = (settingsStore.qualityMode == .bestQuality) ? .quality : .speed
         settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
 
         photoOutput.capturePhoto(with: settings, delegate: self)
+        #endif
     }
 
-    private func configureSession() {
+    private func startIntervalCapture() {
+        intervalCaptureTask?.cancel()
+
+        guard settingsStore.intervalCaptureEnabled else {
+            intervalCaptureTask = nil
+            return
+        }
+
+        intervalCaptureTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let intervalSeconds = await MainActor.run {
+                    self?.settingsStore.intervalCaptureSeconds ?? 2.0
+                }
+                let nanoseconds = UInt64(intervalSeconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                guard !Task.isCancelled else { break }
+
+                await MainActor.run {
+                    guard self?.settingsStore.intervalCaptureEnabled == true else {
+                        self?.stopIntervalCapture()
+                        return
+                    }
+                    self?.requestCapture(shouldStartIntervalCapture: false)
+                }
+            }
+        }
+    }
+
+    private func stopIntervalCapture() {
+        intervalCaptureTask?.cancel()
+        intervalCaptureTask = nil
+    }
+
+    private func configureSession() -> Bool {
         captureSession.beginConfiguration()
+        defer { captureSession.commitConfiguration() }
+
         captureSession.sessionPreset = .photo
 
         do {
@@ -143,16 +231,15 @@ final class CameraViewModel: NSObject, ObservableObject {
                 device.activeFormat = format
             }
 
-            photoOutput.isHighResolutionCaptureEnabled = true
             photoOutput.maxPhotoQualityPrioritization = .quality
             configured = true
+            return true
         } catch {
             Task { @MainActor in
                 self.statusMessage = error.localizedDescription
             }
+            return false
         }
-
-        captureSession.commitConfiguration()
     }
 
     private func bestCameraDevice() throws -> AVCaptureDevice {

@@ -29,13 +29,17 @@ struct ContentView: View {
         .onAppear {
             syncIdleTimer()
             if selectedTab == .camera {
-                cameraViewModel.requestCameraPermissionIfNeeded()
+                Task { @MainActor in
+                    cameraViewModel.requestCameraPermissionIfNeeded()
+                }
             }
         }
         .onChange(of: selectedTab) { _, newValue in
             syncIdleTimer()
             if newValue == .camera {
-                cameraViewModel.requestCameraPermissionIfNeeded()
+                Task { @MainActor in
+                    cameraViewModel.requestCameraPermissionIfNeeded()
+                }
             } else {
                 cameraViewModel.stopSession()
                 UIApplication.shared.isIdleTimerDisabled = false
