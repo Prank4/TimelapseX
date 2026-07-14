@@ -117,6 +117,54 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func startNewSession() throws {
+        var current = activeSession
+        current.status = .closed
+        try Self.persistSession(current, using: fileManager, encoder: encoder)
+        try rotateToNewSession()
+    }
+
+    func updateFrameDurationSeconds(_ duration: Double, for session: SessionRecord) throws {
+        var updated = session
+        updated.frameDurationSeconds = SessionRecord.clampedFrameDuration(duration)
+        try Self.persistSession(updated, using: fileManager, encoder: encoder)
+
+        if updated.id == activeSession.id {
+            activeSession = updated
+        }
+
+        refreshAllSessions()
+    }
+
+    func deleteFrame(at url: URL, in session: SessionRecord) throws {
+        let frameFolder = url.deletingLastPathComponent().standardizedFileURL
+        let sessionFolder = session.folderURL.standardizedFileURL
+        guard frameFolder == sessionFolder else {
+            throw NSError(
+                domain: "TimelapseX.SessionStore",
+                code: 201,
+                userInfo: [NSLocalizedDescriptionKey: "This frame does not belong to the selected session."]
+            )
+        }
+        guard url.lastPathComponent.hasPrefix("IMG_"), url.pathExtension.lowercased() == "jpg" else {
+            throw NSError(
+                domain: "TimelapseX.SessionStore",
+                code: 202,
+                userInfo: [NSLocalizedDescriptionKey: "Only captured JPG frames can be deleted."]
+            )
+        }
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw NSError(
+                domain: "TimelapseX.SessionStore",
+                code: 203,
+                userInfo: [NSLocalizedDescriptionKey: "This frame no longer exists on disk."]
+            )
+        }
+
+        try fileManager.removeItem(at: url)
+        refreshAllSessions()
+    }
+
     /// Creates a new active session, persists it, and refreshes `allSessions`.
     func rotateToNewSession() throws {
         let newSession = Self.makeNewSession()
@@ -200,7 +248,8 @@ final class SessionStore: ObservableObject {
             createdAt: session.createdAt,
             status: session.status,
             nextSequence: session.nextSequence,
-            photosAlbumIdentifier: session.photosAlbumIdentifier
+            photosAlbumIdentifier: session.photosAlbumIdentifier,
+            frameDurationSeconds: session.frameDurationSeconds
         )
         let data = try encoder.encode(persisted)
         try data.write(to: session.sessionJSONURL, options: .atomic)
@@ -235,4 +284,5 @@ private struct PersistedSession: Codable {
     let status: SessionStatus
     let nextSequence: Int
     let photosAlbumIdentifier: String?
+    let frameDurationSeconds: Double?
 }

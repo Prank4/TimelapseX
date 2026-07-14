@@ -52,6 +52,8 @@ enum GridOverlay: String, Codable, CaseIterable {
 
 final class CameraSettingsStore: ObservableObject {
     static let shared = CameraSettingsStore()
+    static let minimumIntervalCaptureSeconds = 0.01
+    static let maximumIntervalCaptureSeconds = 60.0
     
     @Published var lensOverride: LensOverride {
         didSet {
@@ -85,6 +87,18 @@ final class CameraSettingsStore: ObservableObject {
             UserDefaults.standard.set(whiteBalanceLocked, forKey: "settings.whiteBalanceLocked")
         }
     }
+
+    @Published var intervalCaptureEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(intervalCaptureEnabled, forKey: "settings.intervalCaptureEnabled")
+        }
+    }
+
+    @Published var intervalCaptureSeconds: Double {
+        didSet {
+            UserDefaults.standard.set(Self.clampedIntervalCaptureSeconds(intervalCaptureSeconds), forKey: "settings.intervalCaptureSeconds")
+        }
+    }
     
     @Published var cameraPermissionStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
     @Published var photosPermissionStatus: PHAuthorizationStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
@@ -99,6 +113,9 @@ final class CameraSettingsStore: ObservableObject {
         self.gridOverlay = (UserDefaults.standard.string(forKey: "settings.gridOverlay").flatMap(GridOverlay.init)) ?? .off
         self.exposureFocusLocked = UserDefaults.standard.bool(forKey: "settings.exposureFocusLocked")
         self.whiteBalanceLocked = UserDefaults.standard.bool(forKey: "settings.whiteBalanceLocked")
+        self.intervalCaptureEnabled = UserDefaults.standard.bool(forKey: "settings.intervalCaptureEnabled")
+        let savedInterval = UserDefaults.standard.object(forKey: "settings.intervalCaptureSeconds") as? Double
+        self.intervalCaptureSeconds = Self.clampedIntervalCaptureSeconds(savedInterval ?? 2.0)
         
         NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification,
@@ -110,7 +127,19 @@ final class CameraSettingsStore: ObservableObject {
     }
     
     func refreshPermissions() {
-        cameraPermissionStatus = AVCaptureDevice.authorizationStatus(for: .video)
-        photosPermissionStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        let currentCameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        let currentPhotosStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+
+        if cameraPermissionStatus != currentCameraStatus {
+            cameraPermissionStatus = currentCameraStatus
+        }
+
+        if photosPermissionStatus != currentPhotosStatus {
+            photosPermissionStatus = currentPhotosStatus
+        }
+    }
+
+    static func clampedIntervalCaptureSeconds(_ value: Double) -> Double {
+        min(max(value, minimumIntervalCaptureSeconds), maximumIntervalCaptureSeconds)
     }
 }

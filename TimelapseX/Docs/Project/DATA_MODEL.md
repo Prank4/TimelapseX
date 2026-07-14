@@ -25,12 +25,12 @@ In-memory only; the image file is the durable record.
 |---|---|---|
 | `sequenceNumber` | `Int` | Taken from the active session's `nextSequence`. |
 | `filename` | `String` | `IMG_{sequenceNumber:06d}.jpg`. |
-| `capturedAt` | `Date` | Volume-up press-down timestamp for EXIF and logs. |
+| `capturedAt` | `Date` | Hardware volume-button press-down timestamp for EXIF and logs. |
 | `localURL` | `URL` | `Sessions/{sessionId}/{filename}`. |
 | `imageData` | `Data` | Transient, kept only long enough to write to disk. |
 
 No Photos write happens at capture time. Photos only enters the flow when a session is explicitly saved.
-The capture trigger is the hardware volume-up button, not an in-app shutter button.
+The capture trigger is the hardware volume buttons, not an in-app shutter button.
 
 ## 3. `CameraConfiguration`
 Derived from device capabilities plus the current settings store.
@@ -77,6 +77,8 @@ In-memory per export operation.
 |---|---|---|
 | `sessionId` | `String` | The session whose frames will be compiled. |
 | `fps` | `Int` | Segmented control choice: 12, 24, 30, or 60. |
+| `resolution` | enum `.native` / `.hd1080` / `.hd720` | Maximum output long edge. Never upscales beyond source dimensions. |
+| `quality` | enum `.high` / `.standard` / `.compact` | Maps to the H.264 average bitrate used by `AVAssetWriter`. |
 | `outputURL` | `URL` | `Sessions/{sessionId}/timelapse.mp4`. |
 | `photosAssetIdentifier` | `String?` | Set when the source session is already saved. |
 

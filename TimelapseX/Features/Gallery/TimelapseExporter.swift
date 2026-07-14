@@ -9,6 +9,64 @@ import AVFoundation
 import Combine
 import UIKit
 
+struct TimelapseExportSettings: Equatable {
+    var frameDurationSeconds: Double = SessionRecord.defaultFrameDurationSeconds
+    var resolution: TimelapseResolution = .native
+    var quality: TimelapseQuality = .high
+
+    var effectiveFPS: Double {
+        1.0 / SessionRecord.clampedFrameDuration(frameDurationSeconds)
+    }
+}
+
+enum TimelapseResolution: String, CaseIterable, Identifiable {
+    case native
+    case hd1080
+    case hd720
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var displayName: String {
+        switch self {
+        case .native: return "Best (4K)"
+        case .hd1080: return "1080p"
+        case .hd720: return "720p"
+        }
+    }
+
+    nonisolated var maximumPixelSize: CGSize {
+        switch self {
+        case .native: return CGSize(width: 3840, height: 2160)
+        case .hd1080: return CGSize(width: 1920, height: 1080)
+        case .hd720: return CGSize(width: 1280, height: 720)
+        }
+    }
+}
+
+enum TimelapseQuality: String, CaseIterable, Identifiable {
+    case high
+    case standard
+    case compact
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var displayName: String {
+        switch self {
+        case .high: return "High"
+        case .standard: return "Standard"
+        case .compact: return "Compact"
+        }
+    }
+
+    nonisolated var bitrateMultiplier: Int {
+        switch self {
+        case .high: return 10
+        case .standard: return 6
+        case .compact: return 3
+        }
+    }
+}
+
 final class TimelapseExporter: ObservableObject {
     enum ExportState: Equatable {
         case idle
@@ -20,11 +78,10 @@ final class TimelapseExporter: ObservableObject {
     @Published private(set) var state: ExportState = .idle
 
     @MainActor
-    func export(session: SessionRecord, fps: Int) async {
+    func export(session: SessionRecord, settings: TimelapseExportSettings) async {
         guard state == .idle || isResetableState else { return }
         state = .exporting(0.0)
 
-        // Run the AVAssetWriter encoding pipeline on a background Task
         let result = await Task.detached(priority: .userInitiated) { () -> Result<URL, Error> in
             do {
                 let fileManager = FileManager.default
@@ -41,13 +98,16 @@ final class TimelapseExporter: ObservableObject {
                 }
 
                 guard let firstFrameURL = frameURLs.first,
-                      let firstImage = UIImage(contentsOfFile: firstFrameURL.path),
-                      let cgImage = firstImage.cgImage else {
+                      let firstImage = UIImage(contentsOfFile: firstFrameURL.path) else {
                     return .failure(NSError(domain: "TimelapseExporter", code: 102, userInfo: [NSLocalizedDescriptionKey: "Failed to read first frame."]))
                 }
 
-                let width = (cgImage.width / 2) * 2
-                let height = (cgImage.height / 2) * 2
+                let outputSize = Self.outputSize(
+                    sourceSize: Self.orientedPixelSize(for: firstImage),
+                    resolution: settings.resolution
+                )
+                let width = Int(outputSize.width)
+                let height = Int(outputSize.height)
                 let outputURL = session.folderURL.appendingPathComponent("timelapse.mp4")
 
                 if fileManager.fileExists(atPath: outputURL.path) {
@@ -58,7 +118,10 @@ final class TimelapseExporter: ObservableObject {
                 let videoSettings: [String: Any] = [
                     AVVideoCodecKey: AVVideoCodecType.h264,
                     AVVideoWidthKey: width,
-                    AVVideoHeightKey: height
+                    AVVideoHeightKey: height,
+                    AVVideoCompressionPropertiesKey: [
+                        AVVideoAverageBitRateKey: width * height * settings.quality.bitrateMultiplier
+                    ]
                 ]
 
                 let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
@@ -80,7 +143,10 @@ final class TimelapseExporter: ObservableObject {
                 assetWriter.startWriting()
                 assetWriter.startSession(atSourceTime: .zero)
 
-                let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+                let frameDuration = CMTime(
+                    seconds: SessionRecord.clampedFrameDuration(settings.frameDurationSeconds),
+                    preferredTimescale: 60_000
+                )
                 var currentFrameIndex = 0
 
                 for url in frameURLs {
@@ -127,6 +193,11 @@ final class TimelapseExporter: ObservableObject {
         }
     }
 
+    @MainActor
+    func export(session: SessionRecord, fps: Int) async {
+        await export(session: session, settings: TimelapseExportSettings(frameDurationSeconds: 1.0 / Double(fps)))
+    }
+
     func reset() {
         state = .idle
     }
@@ -141,6 +212,44 @@ final class TimelapseExporter: ObservableObject {
     @MainActor
     private func updateProgress(_ progress: Double) {
         self.state = .exporting(progress)
+    }
+
+    nonisolated private static func outputSize(sourceSize: CGSize, resolution: TimelapseResolution) -> CGSize {
+        let sourceWidth = Int(sourceSize.width)
+        let sourceHeight = Int(sourceSize.height)
+        let maximumSize = resolution.maximumPixelSize
+        let maximumWidth = Int(sourceHeight > sourceWidth ? maximumSize.height : maximumSize.width)
+        let maximumHeight = Int(sourceHeight > sourceWidth ? maximumSize.width : maximumSize.height)
+
+        guard sourceWidth > maximumWidth || sourceHeight > maximumHeight else {
+            return CGSize(width: even(sourceWidth), height: even(sourceHeight))
+        }
+
+        let scale = min(
+            CGFloat(maximumWidth) / CGFloat(sourceWidth),
+            CGFloat(maximumHeight) / CGFloat(sourceHeight)
+        )
+        return CGSize(
+            width: even(Int(CGFloat(sourceWidth) * scale)),
+            height: even(Int(CGFloat(sourceHeight) * scale))
+        )
+    }
+
+    nonisolated private static func even(_ value: Int) -> Int {
+        max(2, (value / 2) * 2)
+    }
+
+    nonisolated private static func orientedPixelSize(for image: UIImage) -> CGSize {
+        guard let cgImage = image.cgImage else {
+            return CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        }
+
+        switch image.imageOrientation {
+        case .left, .leftMirrored, .right, .rightMirrored:
+            return CGSize(width: cgImage.height, height: cgImage.width)
+        default:
+            return CGSize(width: cgImage.width, height: cgImage.height)
+        }
     }
 
     nonisolated private static func pixelBuffer(from image: UIImage, size: CGSize) -> CVPixelBuffer? {
@@ -181,9 +290,15 @@ final class TimelapseExporter: ObservableObject {
             return nil
         }
 
-        guard let cgImage = image.cgImage else { return nil }
+        context.setFillColor(UIColor.black.cgColor)
+        context.fill(CGRect(origin: .zero, size: size))
+        context.interpolationQuality = .high
 
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+        context.translateBy(x: 0, y: size.height)
+        context.scaleBy(x: 1, y: -1)
+        UIGraphicsPushContext(context)
+        image.draw(in: CGRect(origin: .zero, size: size))
+        UIGraphicsPopContext()
         return buffer
     }
 }

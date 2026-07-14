@@ -6,14 +6,14 @@ Implementation notes and handoff history for the current project snapshot.
 ## Current Decisions
 - iOS 26.0+ only.
 - SwiftUI app with a two-tab shell: Camera and Settings.
-- No on-screen shutter button; capture is triggered by the hardware volume-up button, matching the Apple Camera app pattern.
+- No on-screen shutter button; capture is triggered by the hardware volume buttons, matching the Apple Camera app pattern.
 - Exactly one active session exists at a time.
 - Captures are stored locally first; Photos is only involved during Save and export flows.
 - Lens changes automatically drop exposure, focus, and white balance locks back to continuous mode.
 
 ## Implementation Notes
 - Keep capture sequencing per session, with numbering reset when a new session starts.
-- Keep capture tied to volume-up press so the UI stays uncluttered.
+- Keep capture tied to volume-button presses so the UI stays uncluttered.
 - Keep grid overlay UI-only so it never changes the saved JPEG output.
 - Save should batch all frames into the session's Photos album in one atomic pass.
 - Timelapse export should reuse the saved session's existing album instead of creating a second one.
@@ -47,7 +47,7 @@ Implementation notes and handoff history for the current project snapshot.
   - `TimelapseX/Features/Camera/VolumeButtonCaptureView.swift`
 - Possible breakpoints: Missing framework imports (e.g. `Combine`, `AVFoundation`) in the newly split files. (Verified all imports are correct and compiles clean).
 - Edge cases: Missing compiler references in Xcode project. (Synchronized automatically due to `PBXFileSystemSynchronizedRootGroup`).
-- Suggested manual tests: Clean build and run on device/simulator. Switch between Camera and Settings tabs. Confirm volume-up hardware trigger captures frames and logs them properly to `Sessions/`.
+- Suggested manual tests: Clean build and run on device/simulator. Switch between Camera and Settings tabs. Confirm volume-button hardware trigger captures frames and logs them properly to `Sessions/`.
 
 ## 0.0.0 — Tab Bar Visibility Fix
 - Approach summary: Added `.toolbar(.visible, for: .tabBar)` modifier to the `List` inside the `NavigationStack` of the `settingsTab` in `ContentView.swift`. (Placing the modifier directly on the `NavigationStack` container is ignored by SwiftUI, so it was moved onto the child view to ensure the tab bar remains always visible when switching away from the auto-hiding Camera view).
@@ -78,18 +78,18 @@ Implementation notes and handoff history for the current project snapshot.
 - Suggested manual tests: Toggle Lens Override, verify changes live without restarting. Toggle Grid Overlay, verify grid lines appear on preview screen. Test locking/unlocking Focus & Exposure and White Balance lock. Open denied permission rows to verify they deep link to the System Settings app.
 
 ## 0.3.x — Timelapse Export
-- Approach summary: Created `TimelapseExporter` utilizing the `AVAssetWriter` and `AVAssetWriterInputPixelBufferAdaptor` video processing pipeline to convert session JPEGs to H.264 `timelapse.mp4` at native resolutions. Combined this with Photos frameworks using `creationRequestForAssetFromVideo` to insert the video directly into the existing Photos album identifier. Extended `SessionDetailView` with FPS Picker control, linear progress bar feedback, and validation flows (prompting the user to save to Photos first before allowing export).
+- Approach summary: Created `TimelapseExporter` utilizing the `AVAssetWriter` and `AVAssetWriterInputPixelBufferAdaptor` video processing pipeline to convert session JPEGs to Photos-compatible H.264 `timelapse.mp4` files. Timelapse creation now works directly from the app session frames; saving original photos or the exported video to Photos is a separate manual action.
 - Files modified/added:
   - `TimelapseX/Features/Gallery/TimelapseExporter.swift` (new) — background thread video compiler and Photos album injector.
-  - `TimelapseX/Features/Gallery/SessionDetailView.swift` — added segmented FPS picker, linear progress bar, and prompt-to-save alerts.
-- Possible breakpoints: Conversion of large native resolutions into pixel buffers can consume significant transient memory (mitigated by using `Task.detached` and manual address unlocking).
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift` — added timing controls, linear progress feedback, manual Photos save actions, and export/save result alerts.
+- Possible breakpoints: Conversion of large source photos into pixel buffers can consume significant transient memory, so the default export is bounded to a 4K video frame and work runs in `Task.detached`.
 - Edge cases: Empty sessions or missing file URLs (guarded and exits with friendly error description).
-- Suggested manual tests: Open an active session with frames, click "Create Timelapse", verify "Save Session First" alert triggers, click "Save to Photos", then export at 12/24/30/60 FPS. Verify progress bar works, and check the Photos album to confirm the H.264 video exists in the same album.
+- Suggested manual tests: Open an active session with frames, click "Create Timelapse", verify export completes without saving original photos first, then manually save the video to Photos. Verify progress feedback works and Photos receives the H.264 video.
 
 ## 0.0.0 — Concurrency & Photos Save Crash Fix
 - Approach summary: Resolved Photos save crash and video export 3302 error on iOS 27 beta.
   1. Stripped custom album creation logic entirely. Now saves all captured frames directly to the user's primary Camera Roll (All Photos) using a synchronous `performChangesAndWait` loop inside a detached task (`Task.detached`), avoiding main actor deadlock completely.
-  2. Bypassed PhotoKit media import entirely for the exported video to resolve the persistent `invalidResource` error 3302. `TimelapseExporter` now compiles the timelapse video and saves it directly to the session's local folder in the app sandbox (`session.folderURL/timelapse.mp4`).
+  2. Bypassed PhotoKit `.video` resource import for the exported video to resolve the persistent `invalidResource` error 3302. `TimelapseExporter` now compiles the timelapse video to the session's local folder (`session.folderURL/timelapse.mp4`), and manual video saving uses the system Camera Roll video saver after a compatibility check.
   3. Integrated a native SwiftUI `ShareLink` inside `SessionDetailView`'s export section which appears once the video file is present on disk.
   4. Resolved sandbox share restrictions where the system share sheet (`sharingd` daemon) lacks access to private app folders (like `Library/Application Support`). We copy the video file to the system temporary directory (`NSTemporaryDirectory()`) right before sharing, allowing the user to successfully save it to Photos or Files.
   5. Fixed all remaining Swift Concurrency warnings by marking computed properties in `SessionRecord` and `SessionStore`, and stateless utility methods in `TimelapseExporter`, as `nonisolated`.
@@ -103,4 +103,16 @@ Implementation notes and handoff history for the current project snapshot.
 - Edge cases: Real device sandbox permissions under iOS 27 beta debugger attach.
 - Suggested manual tests: Build and run. Capture frames, open Gallery, click "Save to Photos". Export timelapse, verify "Success" alert, verify "Share Timelapse" button appears, click it and select "Save Video", then verify the video is successfully saved to your Photos library.
 
-
+## 0.4.x — Gallery Delete, Timelapse Settings, and Capture Hotfix
+- Approach summary: Added a confirmed session delete action directly in `SessionDetailView`, expanded timelapse export with resolution and quality settings, and updated volume-button capture so both volume-up and volume-down trigger with a shorter reset window between presses.
+- Files modified:
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift`
+  - `TimelapseX/Features/Gallery/TimelapseExporter.swift`
+  - `TimelapseX/Features/Camera/VolumeButtonCaptureView.swift`
+  - `TimelapseX/Features/Camera/CameraTabView.swift`
+  - `TimelapseX/Docs/Project/TASKS.md`
+  - `TimelapseX/Docs/Project/DATA_MODEL.md`
+  - `TimelapseX/Docs/Project/MVP_SCOPE.md`
+- Possible breakpoints: Volume-button interception still depends on the hidden `MPVolumeView` and real device audio-session behavior, so simulator validation is limited.
+- Edge cases: Deleting the active session rotates immediately to a fresh session via `SessionStore.discardSession`; export resolution never upscales beyond the source image size.
+- Suggested manual tests: Capture with volume-up and volume-down on device, rapidly press/release both buttons, delete active and saved sessions from detail, export the same session at Native/1080p/720p and High/Standard/Compact quality, then verify the resulting `timelapse.mp4` dimensions and share/save flow.
