@@ -20,6 +20,12 @@ struct ContentView: View {
                     Label("Camera", systemImage: "camera")
                 }
 
+            GalleryView(store: cameraViewModel.sessionStore)
+                .tag(AppTab.gallery)
+                .tabItem {
+                    Label("Gallery", systemImage: "photo.on.rectangle.angled")
+                }
+
             SettingsView(store: cameraViewModel.sessionStore)
                 .tag(AppTab.settings)
                 .tabItem {

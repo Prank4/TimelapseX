@@ -18,6 +18,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var nextSequence: Int
     var photosAlbumIdentifier: String?
     var frameDurationSeconds: Double
+    var lastCaptureAt: Date?
 
     init(
         id: String,
@@ -25,7 +26,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         status: SessionStatus,
         nextSequence: Int,
         photosAlbumIdentifier: String?,
-        frameDurationSeconds: Double = Self.defaultFrameDurationSeconds
+        frameDurationSeconds: Double = Self.defaultFrameDurationSeconds,
+        lastCaptureAt: Date? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -33,6 +35,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         self.nextSequence = nextSequence
         self.photosAlbumIdentifier = photosAlbumIdentifier
         self.frameDurationSeconds = Self.clampedFrameDuration(frameDurationSeconds)
+        self.lastCaptureAt = lastCaptureAt
     }
 
     enum CodingKeys: String, CodingKey {
@@ -42,6 +45,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         case nextSequence
         case photosAlbumIdentifier
         case frameDurationSeconds
+        case lastCaptureAt
     }
 
     init(from decoder: Decoder) throws {
@@ -53,6 +57,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         photosAlbumIdentifier = try container.decodeIfPresent(String.self, forKey: .photosAlbumIdentifier)
         let duration = try container.decodeIfPresent(Double.self, forKey: .frameDurationSeconds) ?? Self.defaultFrameDurationSeconds
         frameDurationSeconds = Self.clampedFrameDuration(duration)
+        lastCaptureAt = try container.decodeIfPresent(Date.self, forKey: .lastCaptureAt)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -63,6 +68,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         try container.encode(nextSequence, forKey: .nextSequence)
         try container.encodeIfPresent(photosAlbumIdentifier, forKey: .photosAlbumIdentifier)
         try container.encode(frameDurationSeconds, forKey: .frameDurationSeconds)
+        try container.encodeIfPresent(lastCaptureAt, forKey: .lastCaptureAt)
     }
 
     nonisolated var folderName: String { id }

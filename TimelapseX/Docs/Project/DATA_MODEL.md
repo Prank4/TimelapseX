@@ -15,8 +15,11 @@ Everything is scoped to a session. Exactly one session is active at a time. A ne
 | `nextSequence` | `Int` | Per-session frame counter, starting at `1` and stored in `session.json`. |
 | `frameCount` | `Int` | Derived from the number of frame files in the folder. |
 | `photosAlbumIdentifier` | `String?` | `PHAssetCollection.localIdentifier`, set after a successful Save. |
+| `lastCaptureAt` | `Date?` | Timestamp of the latest successful frame, used to rotate populated sessions after five idle minutes. |
 
-`session.json` stores `{ "id", "createdAt", "status", "nextSequence" }`.
+`session.json` stores `{ "id", "createdAt", "status", "nextSequence", "lastCaptureAt" }` plus optional Photos and timelapse timing metadata.
+
+A populated active session closes automatically five minutes after its latest successful capture and a fresh active session is created. Empty active sessions are never rotated by inactivity. Legacy sessions without `lastCaptureAt` use the newest frame file's modification date.
 
 ## 2. `CapturedFrame`
 In-memory only; the image file is the durable record.
@@ -44,6 +47,7 @@ Derived from device capabilities plus the current settings store.
 | `focusMode` | `AVCaptureDevice.FocusMode` | Continuous by default, locked when focus lock is enabled. |
 | `whiteBalanceMode` | `AVCaptureDevice.WhiteBalanceMode` | Continuous by default, locked when white balance lock is enabled. |
 | `orientationLock` | enum `.portrait` | Fixed. |
+| `levelAngleDegrees` | `Double?` | Live roll derived from Core Motion gravity and displayed only on the camera preview. |
 
 Changing `lensOverride` while any lock is enabled should drop those locks back to continuous, because the values do not transfer across physical cameras.
 

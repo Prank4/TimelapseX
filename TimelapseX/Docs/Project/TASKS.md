@@ -49,6 +49,10 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 
 ## Hotfixes
 - [ ] Fix Save to Photos so saved sessions reliably appear in Photos again.
+- [x] Rotate a populated active session after five minutes without a successful capture.
+- [x] Add a live camera level indicator.
+- [x] Support selecting and deleting multiple gallery photos together.
+- [x] Move Gallery from Settings into its own tab.
 
 ## Validation
 Run after 0.0.x and again after 0.4.x.

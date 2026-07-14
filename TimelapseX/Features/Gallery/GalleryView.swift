@@ -11,10 +11,25 @@ struct GalleryView: View {
     @ObservedObject var store: SessionStore
 
     var body: some View {
-        ForEach(store.allSessions) { session in
-            NavigationLink(destination: SessionDetailView(session: session, store: store)) {
-                GalleryRow(session: session)
+        NavigationStack {
+            List {
+                if store.allSessions.isEmpty {
+                    ContentUnavailableView(
+                        "No Sessions",
+                        systemImage: "photo.stack",
+                        description: Text("Captured photos will appear here.")
+                    )
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(store.allSessions) { session in
+                        NavigationLink(destination: SessionDetailView(session: session, store: store)) {
+                            GalleryRow(session: session)
+                        }
+                    }
+                }
             }
+            .navigationTitle("Gallery")
+            .toolbar(.visible, for: .tabBar)
         }
     }
 }

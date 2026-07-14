@@ -111,10 +111,6 @@ struct SettingsView: View {
                         Label("Start New Session", systemImage: "plus.circle")
                     }
                 }
-
-                Section("Gallery") {
-                    GalleryView(store: store)
-                }
             }
             .navigationTitle("Settings")
             .toolbar(.visible, for: .tabBar)

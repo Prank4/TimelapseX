@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Combine
+import CoreMotion
 import SwiftUI
 
 final class CameraViewModel: NSObject, ObservableObject {
@@ -14,6 +15,7 @@ final class CameraViewModel: NSObject, ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var isCapturing = false
     @Published private(set) var statusMessage = "Ready"
+    @Published private(set) var levelAngleDegrees: Double?
 
     let sessionStore: SessionStore
     let settingsStore = CameraSettingsStore.shared
@@ -21,8 +23,17 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     private let sessionQueue = DispatchQueue(label: "TimelapseX.Camera.SessionQueue")
     private let photoOutput = AVCapturePhotoOutput()
+    private let motionManager = CMMotionManager()
+    private let motionQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "TimelapseX.Camera.LevelQueue"
+        queue.qualityOfService = .userInteractive
+        queue.maxConcurrentOperationCount = 1
+        return queue
+    }()
     private var pendingCaptureTimestamp: Date?
     private var intervalCaptureTask: Task<Void, Never>?
+    private var inactivityRotationWorkItem: DispatchWorkItem?
     private var configured = false
     private var cancellables = Set<AnyCancellable>()
 
@@ -63,10 +74,16 @@ final class CameraViewModel: NSObject, ObservableObject {
                 self.startIntervalCapture()
             }
             .store(in: &cancellables)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.scheduleInactivityRotation()
+        }
     }
 
     deinit {
         intervalCaptureTask?.cancel()
+        inactivityRotationWorkItem?.cancel()
+        motionManager.stopDeviceMotionUpdates()
     }
 
     func refreshAuthorizationStatus() {
@@ -100,6 +117,7 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     func startSession() {
         guard authorizationStatus == .authorized else { return }
+        startLevelerUpdates()
 
         #if targetEnvironment(simulator)
         isRunning = false
@@ -123,6 +141,7 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     func stopSession() {
         stopIntervalCapture()
+        stopLevelerUpdates()
         sessionQueue.async { [weak self] in
             guard let self, self.captureSession.isRunning else { return }
             self.captureSession.stopRunning()
@@ -146,6 +165,15 @@ final class CameraViewModel: NSObject, ObservableObject {
         #if targetEnvironment(simulator)
         statusMessage = "Capture unavailable in Simulator"
         #else
+        do {
+            if try sessionStore.rotateActiveSessionIfInactive() {
+                statusMessage = "New session started after 5 minutes of inactivity"
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+            return
+        }
+
         guard shouldStartIntervalCapture || settingsStore.intervalCaptureEnabled else {
             stopIntervalCapture()
             return
@@ -202,6 +230,63 @@ final class CameraViewModel: NSObject, ObservableObject {
     private func stopIntervalCapture() {
         intervalCaptureTask?.cancel()
         intervalCaptureTask = nil
+    }
+
+    private func scheduleInactivityRotation() {
+        inactivityRotationWorkItem?.cancel()
+        inactivityRotationWorkItem = nil
+
+        do {
+            if try sessionStore.rotateActiveSessionIfInactive() {
+                statusMessage = "New session started after 5 minutes of inactivity"
+                return
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+            return
+        }
+
+        guard let deadline = sessionStore.activeSessionInactivityDeadline() else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.handleInactivityDeadline()
+        }
+        inactivityRotationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + max(0, deadline.timeIntervalSinceNow),
+            execute: workItem
+        )
+    }
+
+    private func handleInactivityDeadline() {
+        if isCapturing {
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.handleInactivityDeadline()
+            }
+            inactivityRotationWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: workItem)
+            return
+        }
+
+        scheduleInactivityRotation()
+    }
+
+    private func startLevelerUpdates() {
+        guard motionManager.isDeviceMotionAvailable,
+              !motionManager.isDeviceMotionActive else { return }
+
+        motionManager.deviceMotionUpdateInterval = 1.0 / 30.0
+        motionManager.startDeviceMotionUpdates(to: motionQueue) { [weak self] motion, _ in
+            guard let self, let gravity = motion?.gravity else { return }
+            let angle = atan2(gravity.x, -gravity.y) * 180 / .pi
+            DispatchQueue.main.async {
+                self.levelAngleDegrees = angle
+            }
+        }
+    }
+
+    private func stopLevelerUpdates() {
+        motionManager.stopDeviceMotionUpdates()
+        levelAngleDegrees = nil
     }
 
     private func configureSession() -> Bool {
@@ -413,6 +498,7 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
             )
             Task { @MainActor in
                 self.statusMessage = "Saved frame \(self.sessionStore.activeSession.nextSequence - 1)"
+                self.scheduleInactivityRotation()
             }
         } catch {
             Task { @MainActor in
