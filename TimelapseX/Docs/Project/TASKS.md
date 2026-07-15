@@ -53,6 +53,10 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 - [x] Add a live camera level indicator.
 - [x] Support selecting and deleting multiple gallery photos together.
 - [x] Move Gallery from Settings into its own tab.
+- [x] Prevent Gallery memory crashes by downsampling and bounding concurrent image decoding.
+- [x] Move the full-screen undo banner above the delete control.
+- [x] Show sequence numbers on Gallery thumbnails.
+- [x] Support pinch-controlled Gallery density from two through eight images per row.
 
 ## Validation
 Run after 0.0.x and again after 0.4.x.

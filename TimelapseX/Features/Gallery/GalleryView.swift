@@ -65,6 +65,7 @@ private struct GalleryRow: View {
         }
         .padding(.vertical, 4)
         .task { await loadThumbnail() }
+        .onDisappear { thumbnail = nil }
     }
 
     // MARK: Subviews
@@ -116,10 +117,23 @@ private struct GalleryRow: View {
 
     private func loadThumbnail() async {
         guard thumbnail == nil else { return }
-        let firstFrameURL = session.folderURL.appendingPathComponent("IMG_000001.jpg")
-        let loaded = await Task.detached(priority: .userInitiated) {
-            UIImage(contentsOfFile: firstFrameURL.path)
+        let folderURL = session.folderURL
+        let firstFrameURL = await Task.detached(priority: .utility) {
+            let contents = (try? FileManager.default.contentsOfDirectory(
+                at: folderURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            return contents
+                .filter { $0.lastPathComponent.hasPrefix("IMG_") && $0.pathExtension.lowercased() == "jpg" }
+                .min { $0.lastPathComponent < $1.lastPathComponent }
         }.value
-        await MainActor.run { thumbnail = loaded }
+        guard !Task.isCancelled, let firstFrameURL,
+              let loaded = await GalleryImageLoader.shared.loadImage(
+                at: firstFrameURL,
+                maxPixelSize: 180
+              ),
+              !Task.isCancelled else { return }
+        thumbnail = UIImage(cgImage: loaded)
     }
 }

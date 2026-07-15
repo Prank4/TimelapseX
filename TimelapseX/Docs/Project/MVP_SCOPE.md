@@ -9,7 +9,7 @@ Define the first shippable slice of the app and make the non-goals explicit.
 - No on-screen shutter button; capture follows the Apple Camera app pattern.
 - A dedicated Gallery tab for session browsing and a Settings tab for permissions and camera controls.
 - Session-based local storage with one active session at a time.
-- Gallery review with Save and Discard actions plus multi-select photo deletion.
+- Gallery review with Save and Discard actions, multi-select photo deletion, numbered thumbnails, and a persistent pinch-adjustable grid density.
 - A live camera level indicator and automatic session rotation after five capture-idle minutes.
 - Timelapse export from a saved session.
 - Timelapse export controls for FPS, resolution, and output quality.

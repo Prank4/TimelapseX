@@ -35,18 +35,20 @@ struct SessionDetailView: View {
     @State private var deletedFrame: DeletedFrame?
     @State private var frameDurationText = ""
     @State private var showTimelapseSettings = false
+    @State private var pinchStartingColumnCount: Int?
+    @AppStorage("gallery.gridColumnCount") private var gridColumnCount = 4
     @FocusState private var durationFieldFocused: Bool
 
     enum VideoSaveState: Equatable {
         case idle, saving, success, failed(String)
     }
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 6),
-        GridItem(.flexible(), spacing: 6),
-        GridItem(.flexible(), spacing: 6),
-        GridItem(.flexible(), spacing: 6)
-    ]
+    private var columns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(), spacing: 6),
+            count: GalleryGridLayoutPolicy.clampedColumnCount(gridColumnCount)
+        )
+    }
 
     init(session: SessionRecord, store: SessionStore) {
         self.session = session
@@ -94,6 +96,7 @@ struct SessionDetailView: View {
                 )
             }
             .onAppear {
+                gridColumnCount = GalleryGridLayoutPolicy.clampedColumnCount(gridColumnCount)
                 syncExportSettingsFromSession()
                 loadFrameURLs()
                 checkExportedVideo()
@@ -263,10 +266,20 @@ struct SessionDetailView: View {
                                     .padding(5)
                             }
                         }
+                        .overlay(alignment: .bottomLeading) {
+                            Text("\(index + 1)")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(.black.opacity(0.62), in: Capsule())
+                                .padding(5)
+                        }
                 }
                 .buttonStyle(.plain)
             }
         }
+        .simultaneousGesture(gridMagnificationGesture)
         .padding(.horizontal, 12)
         .padding(.bottom, 16)
     }
@@ -279,6 +292,9 @@ struct SessionDetailView: View {
                     .foregroundStyle(.secondary)
                 HStack(spacing: 8) {
                     Label("\(frameURLs.count) frame\(frameURLs.count == 1 ? "" : "s")", systemImage: "photo.stack")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text("• \(GalleryGridLayoutPolicy.clampedColumnCount(gridColumnCount)) per row")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -428,6 +444,26 @@ struct SessionDetailView: View {
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
             }
         }
+    }
+
+    private var gridMagnificationGesture: some Gesture {
+        MagnifyGesture(minimumScaleDelta: 0.02)
+            .onChanged { value in
+                let startingCount = pinchStartingColumnCount ?? gridColumnCount
+                if pinchStartingColumnCount == nil {
+                    pinchStartingColumnCount = startingCount
+                }
+                let updatedCount = GalleryGridLayoutPolicy.columnCount(
+                    startingAt: startingCount,
+                    magnification: value.magnification
+                )
+                if gridColumnCount != updatedCount {
+                    gridColumnCount = updatedCount
+                }
+            }
+            .onEnded { _ in
+                pinchStartingColumnCount = nil
+            }
     }
 
     @ViewBuilder
@@ -920,7 +956,10 @@ private struct FramePagerView: View {
             } else {
                 TabView(selection: $selectedIndex) {
                     ForEach(Array(frameURLs.enumerated()), id: \.element.absoluteString) { index, url in
-                        FullScreenFrameImage(url: url)
+                        FullScreenFrameImage(
+                            url: url,
+                            shouldLoad: abs(index - selectedIndex) <= 1
+                        )
                             .tag(index)
                     }
                 }
@@ -1038,7 +1077,7 @@ private struct FramePagerView: View {
             .padding(.vertical, 12)
             .background(.black.opacity(0.88), in: Capsule())
             .padding(.horizontal, 16)
-            .padding(.bottom, 18)
+            .padding(.bottom, 96)
         }
     }
 
@@ -1057,6 +1096,7 @@ private struct FramePagerView: View {
 
 private struct FullScreenFrameImage: View {
     let url: URL
+    let shouldLoad: Bool
     @State private var image: UIImage?
 
     var body: some View {
@@ -1071,16 +1111,22 @@ private struct FullScreenFrameImage: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task { await loadImage() }
+        .task(id: shouldLoad) {
+            guard shouldLoad else {
+                image = nil
+                return
+            }
+            await loadImage()
+        }
     }
 
     private func loadImage() async {
         guard image == nil else { return }
-        let url = url
-        let loaded = await Task.detached(priority: .userInitiated) {
-            UIImage(contentsOfFile: url.path)
-        }.value
-        await MainActor.run { image = loaded }
+        guard let loaded = await GalleryImageLoader.shared.loadImage(
+            at: url,
+            maxPixelSize: 3_072
+        ), !Task.isCancelled, shouldLoad else { return }
+        image = UIImage(cgImage: loaded)
     }
 }
 
@@ -1104,14 +1150,15 @@ private struct FrameThumbnail: View {
             }
         }
         .task { await loadImage() }
+        .onDisappear { image = nil }
     }
 
     private func loadImage() async {
         guard image == nil else { return }
-        let url = url
-        let loaded = await Task.detached(priority: .userInitiated) {
-            UIImage(contentsOfFile: url.path)
-        }.value
-        await MainActor.run { image = loaded }
+        guard let loaded = await GalleryImageLoader.shared.loadImage(
+            at: url,
+            maxPixelSize: 320
+        ), !Task.isCancelled else { return }
+        image = UIImage(cgImage: loaded)
     }
 }

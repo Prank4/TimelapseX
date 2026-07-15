@@ -4,9 +4,12 @@ import PackageDescription
 
 let package = Package(
     name: "TimelapseXSessionLogic",
-    platforms: [.iOS(.v18)],
+    platforms: [.macOS(.v14), .iOS(.v18)],
     products: [
-        .library(name: "TimelapseXSessionLogic", targets: ["TimelapseXSessionLogic"])
+        .library(
+            name: "TimelapseXLogic",
+            targets: ["TimelapseXSessionLogic", "TimelapseXGalleryLogic"]
+        )
     ],
     targets: [
         .target(
@@ -20,9 +23,20 @@ let package = Package(
             ],
             sources: ["SessionRotationPolicy.swift"]
         ),
+        .target(
+            name: "TimelapseXGalleryLogic",
+            path: "TimelapseX/Features/Gallery",
+            exclude: [
+                "GalleryView.swift",
+                "PhotosSaveAction.swift",
+                "SessionDetailView.swift",
+                "TimelapseExporter.swift"
+            ],
+            sources: ["GalleryGridLayoutPolicy.swift", "GalleryImageLoader.swift"]
+        ),
         .testTarget(
             name: "TimelapseXSessionLogicTests",
-            dependencies: ["TimelapseXSessionLogic"],
+            dependencies: ["TimelapseXSessionLogic", "TimelapseXGalleryLogic"],
             path: "TimelapseXTests"
         )
     ]
