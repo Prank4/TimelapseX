@@ -7,9 +7,10 @@ Define the first shippable slice of the app and make the non-goals explicit.
 - iOS 26.0+ only, with no back-compat branching.
 - A Camera tab that captures one photo per hardware volume-button press with minimal latency.
 - No on-screen shutter button; capture follows the Apple Camera app pattern.
-- A Settings tab that exposes permissions, camera controls, and the Gallery section.
+- A dedicated Gallery tab for session browsing and a Settings tab for permissions and camera controls.
 - Session-based local storage with one active session at a time.
-- Gallery review with Save and Discard actions.
+- Gallery review with Save and Discard actions plus multi-select photo deletion.
+- A live camera level indicator and automatic session rotation after five capture-idle minutes.
 - Timelapse export from a saved session.
 - Timelapse export controls for FPS, resolution, and output quality.
 

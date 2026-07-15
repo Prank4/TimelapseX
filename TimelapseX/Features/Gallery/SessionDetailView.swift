@@ -21,6 +21,7 @@ struct SessionDetailView: View {
 
     @State private var exportSettings = TimelapseExportSettings()
     @State private var showDiscardConfirm = false
+    @State private var showFrameDeleteConfirm = false
     @State private var operationAlert: SessionOperationAlert?
     
     @State private var discardError: String?
@@ -29,6 +30,8 @@ struct SessionDetailView: View {
     @State private var exportedVideoURL: URL?
     @State private var videoSaveState: VideoSaveState = .idle
     @State private var selectedFrameIndex: Int?
+    @State private var isSelectingFrames = false
+    @State private var selectedFrameURLs: Set<URL> = []
     @State private var deletedFrame: DeletedFrame?
     @State private var frameDurationText = ""
     @State private var showTimelapseSettings = false
@@ -64,6 +67,14 @@ struct SessionDetailView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("All \(frameURLs.count) frame\(frameURLs.count == 1 ? "" : "s") will be permanently deleted. This cannot be undone.")
+            }
+            .alert("Delete Selected Photos?", isPresented: $showFrameDeleteConfirm) {
+                Button("Delete \(selectedFrameURLs.count)", role: .destructive) {
+                    deleteSelectedFrames()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The selected \(selectedFrameURLs.count) photo\(selectedFrameURLs.count == 1 ? "" : "s") will be permanently deleted. This cannot be undone.")
             }
             .alert("Error", isPresented: Binding(get: { discardError != nil }, set: { if !$0 { discardError = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -116,6 +127,9 @@ struct SessionDetailView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
             }
+            .safeAreaInset(edge: .bottom) {
+                selectionActionBar
+            }
     }
 
     private var mainContent: some View {
@@ -156,7 +170,21 @@ struct SessionDetailView: View {
     @ToolbarContentBuilder
     private var sessionToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            sessionActionsMenu
+            Button(isSelectingFrames ? "Cancel" : "Select") {
+                if isSelectingFrames {
+                    endFrameSelection()
+                } else {
+                    isSelectingFrames = true
+                    deletedFrame = nil
+                }
+            }
+            .disabled(frameURLs.isEmpty || isExporting)
+        }
+
+        if !isSelectingFrames {
+            ToolbarItem(placement: .topBarTrailing) {
+                sessionActionsMenu
+            }
         }
     }
 
@@ -210,12 +238,31 @@ struct SessionDetailView: View {
         LazyVGrid(columns: columns, spacing: 6) {
             ForEach(Array(frameURLs.enumerated()), id: \.element.absoluteString) { index, url in
                 Button {
-                    selectedFrameIndex = index
+                    if isSelectingFrames {
+                        toggleFrameSelection(url)
+                    } else {
+                        selectedFrameIndex = index
+                    }
                 } label: {
                     FrameThumbnail(url: url)
                         .aspectRatio(1, contentMode: .fill)
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay {
+                            if selectedFrameURLs.contains(url) {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(.black.opacity(0.28))
+                            }
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            if isSelectingFrames {
+                                Image(systemName: selectedFrameURLs.contains(url) ? "checkmark.circle.fill" : "circle")
+                                    .font(.title3)
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, selectedFrameURLs.contains(url) ? Color.blue : Color.black.opacity(0.45))
+                                    .padding(5)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
             }
@@ -403,6 +450,26 @@ struct SessionDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var selectionActionBar: some View {
+        if isSelectingFrames {
+            HStack {
+                Text("\(selectedFrameURLs.count) selected")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Button(role: .destructive) {
+                    showFrameDeleteConfirm = true
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .disabled(selectedFrameURLs.isEmpty)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(.bar)
+        }
+    }
+
     private var isExporting: Bool {
         if case .exporting = exporter.state {
             return true
@@ -503,6 +570,36 @@ struct SessionDetailView: View {
         }
     }
 
+    private func toggleFrameSelection(_ url: URL) {
+        if selectedFrameURLs.contains(url) {
+            selectedFrameURLs.remove(url)
+        } else {
+            selectedFrameURLs.insert(url)
+        }
+    }
+
+    private func endFrameSelection() {
+        isSelectingFrames = false
+        selectedFrameURLs.removeAll()
+    }
+
+    private func deleteSelectedFrames() {
+        let urls = Array(selectedFrameURLs)
+        guard !urls.isEmpty else { return }
+
+        do {
+            let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+            try store.deleteFrames(at: urls, in: liveSession)
+            deletedFrame = nil
+            endFrameSelection()
+            invalidateExportedVideo(for: liveSession)
+            loadFrameURLs()
+            checkExportedVideo()
+        } catch {
+            frameDeleteError = error.localizedDescription
+        }
+    }
+
     private func undoDeletedFrame(_ frame: DeletedFrame) {
         do {
             try frame.data.write(to: frame.url, options: .atomic)
@@ -565,6 +662,10 @@ struct SessionDetailView: View {
         frameURLs = contents
             .filter { $0.lastPathComponent.hasPrefix("IMG_") && $0.pathExtension.lowercased() == "jpg" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        selectedFrameURLs.formIntersection(frameURLs)
+        if frameURLs.isEmpty {
+            endFrameSelection()
+        }
     }
 
     private func checkExportedVideo() {

@@ -5,7 +5,7 @@ Implementation notes and handoff history for the current project snapshot.
 
 ## Current Decisions
 - iOS 26.0+ only.
-- SwiftUI app with a two-tab shell: Camera and Settings.
+- SwiftUI app with a three-tab shell: Camera, Gallery, and Settings.
 - No on-screen shutter button; capture is triggered by the hardware volume buttons, matching the Apple Camera app pattern.
 - Exactly one active session exists at a time.
 - Captures are stored locally first; Photos is only involved during Save and export flows.
@@ -23,6 +23,19 @@ Implementation notes and handoff history for the current project snapshot.
 - Preserve the distinction between active, saved, and discarded sessions when wiring Gallery actions.
 - Keep the project docs in sync with `MVP_SCOPE.md`, `DATA_MODEL.md`, and `TASKS.md` when scope changes.
 - Swift file headers should always use `Created by Prank`; do not introduce other author names in new or edited files.
+
+## 0.4.1 — Camera and Gallery Hotfix
+- Approach summary: Added a persisted successful-capture timestamp and a tested five-minute rotation policy, with deadline scheduling in the camera view model and a legacy frame-date fallback. Added a Core Motion camera level overlay, promoted Gallery to its own tab, and added confirmed multi-select frame deletion with storage validation before removal.
+- Files modified/added:
+  - `Package.swift` and `TimelapseXTests/SessionRotationPolicyTests.swift` — isolated Swift Testing regression coverage for the inactivity boundary.
+  - `TimelapseX/Data/Session/SessionRotationPolicy.swift`, `SessionRecord.swift`, and `SessionStore.swift` — inactivity policy, timestamp persistence, legacy fallback, rotation API, and validated batch deletion.
+  - `TimelapseX/Features/Camera/CameraViewModel.swift`, `CameraLevelView.swift`, and `CameraTabView.swift` — deadline scheduling and live level presentation.
+  - `TimelapseX/AppRoot/AppTab.swift`, `Features/ContentView.swift`, `Features/Gallery/GalleryView.swift`, and `Features/Settings/SettingsView.swift` — dedicated Gallery tab.
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift` — multi-select UI, confirmation, and batch delete action.
+  - `TimelapseX/Docs/Project/TASKS.md`, `DATA_MODEL.md`, and `MVP_SCOPE.md` — source-of-truth updates.
+- Possible breakpoints: Core Motion values require a real device; simulator builds cannot verify physical level accuracy. Long-running main-queue timers may be delayed while iOS suspends the app, but overdue rotation is rechecked on resume/relaunch and before capture.
+- Edge cases: Empty sessions do not auto-rotate; legacy populated sessions use the newest JPEG modification date; an in-flight capture delays deadline handling; selected URLs are all validated as session-owned JPGs before batch removal; deleting frames invalidates an existing timelapse export.
+- Suggested manual tests: Capture one frame and wait five minutes to confirm a closed session and fresh active session appear; relaunch just before/after the deadline; capture continuously to confirm the deadline keeps extending; rotate a real device to confirm the level turns yellow within one degree; select several Gallery frames, cancel once, then confirm batch deletion and verify the remaining count and exported-video invalidation.
 
 ## 0.0.x Implementation Notes
 - Approach summary: scaffolded the camera core with a session store, local JPEG writes, append-only capture logging, and a SwiftUI tab shell that requests camera access on first launch.

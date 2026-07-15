@@ -81,6 +81,9 @@ final class SessionStore: ObservableObject {
         }
 
         activeSession.nextSequence += 1
+        if outcome == .success {
+            activeSession.lastCaptureAt = capturedAt
+        }
         try Self.persistSession(activeSession, using: fileManager, encoder: encoder)
         refreshAllSessions()
     }
@@ -124,6 +127,36 @@ final class SessionStore: ObservableObject {
         try rotateToNewSession()
     }
 
+    @discardableResult
+    func rotateActiveSessionIfInactive(
+        now: Date = Date(),
+        inactivityInterval: TimeInterval = SessionRotationPolicy.inactivityInterval
+    ) throws -> Bool {
+        let frameCount = activeSession.frameCount
+        let lastCaptureAt = activeSession.lastCaptureAt ?? mostRecentFrameDate(in: activeSession)
+        guard SessionRotationPolicy.shouldRotate(
+            frameCount: frameCount,
+            lastCaptureAt: lastCaptureAt,
+            now: now,
+            inactivityInterval: inactivityInterval
+        ) else {
+            return false
+        }
+
+        try startNewSession()
+        return true
+    }
+
+    func activeSessionInactivityDeadline(
+        inactivityInterval: TimeInterval = SessionRotationPolicy.inactivityInterval
+    ) -> Date? {
+        SessionRotationPolicy.deadline(
+            frameCount: activeSession.frameCount,
+            lastCaptureAt: activeSession.lastCaptureAt ?? mostRecentFrameDate(in: activeSession),
+            inactivityInterval: inactivityInterval
+        )
+    }
+
     func updateFrameDurationSeconds(_ duration: Double, for session: SessionRecord) throws {
         var updated = session
         updated.frameDurationSeconds = SessionRecord.clampedFrameDuration(duration)
@@ -137,6 +170,24 @@ final class SessionStore: ObservableObject {
     }
 
     func deleteFrame(at url: URL, in session: SessionRecord) throws {
+        try deleteFrames(at: [url], in: session)
+    }
+
+    func deleteFrames(at urls: [URL], in session: SessionRecord) throws {
+        let uniqueURLs = Array(Set(urls))
+        guard !uniqueURLs.isEmpty else { return }
+
+        for url in uniqueURLs {
+            try validateFrameURL(url, in: session)
+        }
+
+        for url in uniqueURLs {
+            try fileManager.removeItem(at: url)
+        }
+        refreshAllSessions()
+    }
+
+    private func validateFrameURL(_ url: URL, in session: SessionRecord) throws {
         let frameFolder = url.deletingLastPathComponent().standardizedFileURL
         let sessionFolder = session.folderURL.standardizedFileURL
         guard frameFolder == sessionFolder else {
@@ -160,9 +211,6 @@ final class SessionStore: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "This frame no longer exists on disk."]
             )
         }
-
-        try fileManager.removeItem(at: url)
-        refreshAllSessions()
     }
 
     /// Creates a new active session, persists it, and refreshes `allSessions`.
@@ -249,7 +297,8 @@ final class SessionStore: ObservableObject {
             status: session.status,
             nextSequence: session.nextSequence,
             photosAlbumIdentifier: session.photosAlbumIdentifier,
-            frameDurationSeconds: session.frameDurationSeconds
+            frameDurationSeconds: session.frameDurationSeconds,
+            lastCaptureAt: session.lastCaptureAt
         )
         let data = try encoder.encode(persisted)
         try data.write(to: session.sessionJSONURL, options: .atomic)
@@ -267,8 +316,22 @@ final class SessionStore: ObservableObject {
             createdAt: createdAt,
             status: .active,
             nextSequence: 1,
-            photosAlbumIdentifier: nil
+            photosAlbumIdentifier: nil,
+            lastCaptureAt: nil
         )
+    }
+
+    private func mostRecentFrameDate(in session: SessionRecord) -> Date? {
+        let frameURLs = (try? fileManager.contentsOfDirectory(
+            at: session.folderURL,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return frameURLs
+            .filter { $0.lastPathComponent.hasPrefix("IMG_") && $0.pathExtension.lowercased() == "jpg" }
+            .compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+            .max()
     }
 
     private static func logLine(for entry: CaptureLogEntry) -> String {
@@ -285,4 +348,5 @@ private struct PersistedSession: Codable {
     let nextSequence: Int
     let photosAlbumIdentifier: String?
     let frameDurationSeconds: Double?
+    let lastCaptureAt: Date?
 }

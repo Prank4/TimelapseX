@@ -26,9 +26,13 @@ struct CameraTabView: View {
                 CameraPreviewView(session: cameraViewModel.captureSession)
                     .ignoresSafeArea()
                     .overlay {
-                        GridOverlayView(type: cameraViewModel.settingsStore.gridOverlay)
-                            .ignoresSafeArea()
-                            .allowsHitTesting(false)
+                        ZStack {
+                            GridOverlayView(type: cameraViewModel.settingsStore.gridOverlay)
+                                .ignoresSafeArea()
+
+                            CameraLevelView(angleDegrees: cameraViewModel.levelAngleDegrees)
+                        }
+                        .allowsHitTesting(false)
                     }
                     .task {
                         cameraViewModel.startSession()
