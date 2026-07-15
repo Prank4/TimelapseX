@@ -61,3 +61,4 @@ in project-specific documentation.
 
 10. **Branch required for every task, including bug fixes.** Rule 1 applies to all work — feature implementation, bug fixes, UI tweaks, and refactors alike. There is no exception for "small" or "quick" changes. If you are about to modify a source file and you are not on a task branch, stop and create one first.
 11. **Keep SwiftPM platform constants compatible with the manifest tools version.** When a test-only package uses `swift-tools-version: 6.0`, do not use platform constants introduced by a later PackageDescription release; use an older compatible minimum or raise the tools version deliberately.
+12. **Declare the host platform for cross-platform SwiftPM tests.** If app logic is tested with `swift test` on macOS, set an explicit supported macOS version in `Package.swift` before using APIs gated by a host OS availability requirement.

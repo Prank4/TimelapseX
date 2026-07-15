@@ -37,6 +37,19 @@ Implementation notes and handoff history for the current project snapshot.
 - Edge cases: Empty sessions do not auto-rotate; legacy populated sessions use the newest JPEG modification date; an in-flight capture delays deadline handling; selected URLs are all validated as session-owned JPGs before batch removal; deleting frames invalidates an existing timelapse export.
 - Suggested manual tests: Capture one frame and wait five minutes to confirm a closed session and fresh active session appear; relaunch just before/after the deadline; capture continuously to confirm the deadline keeps extending; rotate a real device to confirm the level turns yellow within one degree; select several Gallery frames, cancel once, then confirm batch deletion and verify the remaining count and exported-video invalidation.
 
+## 0.4.2 — Gallery Stability and Density Hotfix
+- Approach summary: Replaced gallery-time full-resolution JPEG decoding with a serialized ImageIO downsampler, bounded the full-screen pager to the current and adjacent frames, discarded off-screen thumbnail state, moved the pager undo banner clear of the delete button, added per-thumbnail sequence badges, and added a persistent two-to-eight-column pinch gesture.
+- Files modified/added:
+  - `Package.swift`, `TimelapseXTests/GalleryImageLoaderTests.swift`, and `TimelapseXTests/GalleryGridLayoutPolicyTests.swift` — regression coverage for decoded pixel bounds, invalid files, non-upscaling, pinch direction, and grid limits.
+  - `TimelapseX/Features/Gallery/GalleryImageLoader.swift` — serialized, cancellation-aware ImageIO thumbnail decoding without a second in-memory cache.
+  - `TimelapseX/Features/Gallery/GalleryGridLayoutPolicy.swift` — tested two-to-eight-column pinch mapping.
+  - `TimelapseX/Features/Gallery/GalleryView.swift` — downsampled session thumbnails and first-existing-frame fallback.
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift` — downsampled grid/pager images, bounded pager residency, thumbnail numbering, pinch density, and undo-banner placement.
+  - `TimelapseX/Docs/Project/TASKS.md` and `MVP_SCOPE.md` — source-of-truth updates.
+- Possible breakpoints: A 3,072-pixel full-screen preview is display-oriented and intentionally does not expose every source pixel; exporting and saving continue to use original JPEGs. ImageIO decoding remains synchronous within its actor, so a damaged or unusually slow file can delay later gallery loads without blocking the main thread.
+- Edge cases: Canceled off-screen requests are skipped before decode; invalid images remain placeholders; small images are never upscaled; deleted first frames no longer leave a blank session thumbnail; pinch density is clamped and persisted from two through eight columns.
+- Suggested manual tests: Rapidly scroll a long session from beginning to end several times while watching memory in Instruments, rapidly swipe forward and backward in full-screen mode, delete and undo to confirm the banner sits above the trash button, verify thumbnail numbers stay aligned after deletion, and pinch in/out to confirm two-through-eight-column layouts persist after reopening the session.
+
 ## 0.0.x Implementation Notes
 - Approach summary: scaffolded the camera core with a session store, local JPEG writes, append-only capture logging, and a SwiftUI tab shell that requests camera access on first launch.
 - Files modified: `TimelapseX/Features/Camera/CameraCore.swift`, `TimelapseX/Features/ContentView.swift`, `TimelapseX.xcodeproj/project.pbxproj`.
