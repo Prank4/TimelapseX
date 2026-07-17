@@ -17,6 +17,17 @@ struct TimelapseExportSettings: Equatable {
     var effectiveFPS: Double {
         1.0 / SessionRecord.clampedFrameDuration(frameDurationSeconds)
     }
+
+    func estimatedDuration(
+        forFrameFilenames frameFilenames: [String],
+        overrides: [String: Double]
+    ) -> TimeInterval {
+        FrameDurationPolicy.totalDuration(
+            frameFilenames: frameFilenames,
+            globalDuration: frameDurationSeconds,
+            overrides: overrides
+        )
+    }
 }
 
 enum TimelapseResolution: String, CaseIterable, Identifiable {
@@ -143,11 +154,8 @@ final class TimelapseExporter: ObservableObject {
                 assetWriter.startWriting()
                 assetWriter.startSession(atSourceTime: .zero)
 
-                let frameDuration = CMTime(
-                    seconds: SessionRecord.clampedFrameDuration(settings.frameDurationSeconds),
-                    preferredTimescale: 60_000
-                )
                 var currentFrameIndex = 0
+                var currentPresentationTime = CMTime.zero
 
                 for url in frameURLs {
                     while !writerInput.isReadyForMoreMediaData {
@@ -164,8 +172,24 @@ final class TimelapseExporter: ObservableObject {
                         continue
                     }
 
-                    let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(currentFrameIndex))
-                    bufferAdaptor.append(buffer, withPresentationTime: presentationTime)
+                    guard bufferAdaptor.append(buffer, withPresentationTime: currentPresentationTime) else {
+                        assetWriter.cancelWriting()
+                        return .failure(assetWriter.error ?? NSError(
+                            domain: "TimelapseExporter",
+                            code: 106,
+                            userInfo: [NSLocalizedDescriptionKey: "Failed to append frame \(url.lastPathComponent)."]
+                        ))
+                    }
+
+                    let duration = FrameDurationPolicy.effectiveDuration(
+                        for: url.lastPathComponent,
+                        globalDuration: settings.frameDurationSeconds,
+                        overrides: session.frameDurationOverrides
+                    )
+                    currentPresentationTime = CMTimeAdd(
+                        currentPresentationTime,
+                        CMTime(seconds: duration, preferredTimescale: 60_000)
+                    )
 
                     currentFrameIndex += 1
                     let progress = Double(currentFrameIndex) / Double(frameURLs.count)
@@ -173,6 +197,7 @@ final class TimelapseExporter: ObservableObject {
                 }
 
                 writerInput.markAsFinished()
+                assetWriter.endSession(atSourceTime: currentPresentationTime)
                 await assetWriter.finishWriting()
 
                 if assetWriter.status == .failed {

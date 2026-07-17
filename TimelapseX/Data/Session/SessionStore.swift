@@ -130,6 +130,7 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func rotateActiveSessionIfInactive(
         now: Date = Date(),
+        isEnabled: Bool = true,
         inactivityInterval: TimeInterval = SessionRotationPolicy.inactivityInterval
     ) throws -> Bool {
         let frameCount = activeSession.frameCount
@@ -138,6 +139,7 @@ final class SessionStore: ObservableObject {
             frameCount: frameCount,
             lastCaptureAt: lastCaptureAt,
             now: now,
+            isEnabled: isEnabled,
             inactivityInterval: inactivityInterval
         ) else {
             return false
@@ -148,11 +150,13 @@ final class SessionStore: ObservableObject {
     }
 
     func activeSessionInactivityDeadline(
+        isEnabled: Bool = true,
         inactivityInterval: TimeInterval = SessionRotationPolicy.inactivityInterval
     ) -> Date? {
         SessionRotationPolicy.deadline(
             frameCount: activeSession.frameCount,
             lastCaptureAt: activeSession.lastCaptureAt ?? mostRecentFrameDate(in: activeSession),
+            isEnabled: isEnabled,
             inactivityInterval: inactivityInterval
         )
     }
@@ -167,6 +171,73 @@ final class SessionStore: ObservableObject {
         }
 
         refreshAllSessions()
+    }
+
+    func updateFrameDurationOverride(
+        _ duration: Double?,
+        forFrameAt url: URL,
+        in session: SessionRecord
+    ) throws {
+        try validateFrameURL(url, in: session)
+
+        var updated = session
+        if let duration {
+            updated.frameDurationOverrides[url.lastPathComponent] = FrameDurationPolicy.clampedOverride(duration)
+        } else {
+            updated.frameDurationOverrides.removeValue(forKey: url.lastPathComponent)
+        }
+        try persistAndPublish(updated)
+    }
+
+    @discardableResult
+    func importFrameAtBeginning(
+        imageData: Data,
+        in session: SessionRecord,
+        importedAt: Date = Date()
+    ) throws -> URL {
+        guard !imageData.isEmpty else {
+            throw NSError(
+                domain: "TimelapseX.SessionStore",
+                code: 204,
+                userInfo: [NSLocalizedDescriptionKey: "The selected photo did not contain image data."]
+            )
+        }
+
+        try Self.ensureSessionFolder(session, using: fileManager)
+        let leadFrameURL = session.folderURL.appendingPathComponent("IMG_000000.jpg")
+        var archivedLeadFrameURL: URL?
+
+        if fileManager.fileExists(atPath: leadFrameURL.path) {
+            let archiveURL = session.folderURL.appendingPathComponent(
+                "IMG_000000_\(UUID().uuidString).jpg"
+            )
+            try fileManager.moveItem(at: leadFrameURL, to: archiveURL)
+            archivedLeadFrameURL = archiveURL
+        }
+
+        do {
+            try imageData.write(to: leadFrameURL, options: .atomic)
+
+            var updated = session
+            if let archivedLeadFrameURL,
+               let existingOverride = updated.frameDurationOverrides.removeValue(
+                forKey: leadFrameURL.lastPathComponent
+               ) {
+                updated.frameDurationOverrides[archivedLeadFrameURL.lastPathComponent] = existingOverride
+            }
+
+            if updated.id == activeSession.id {
+                updated.lastCaptureAt = importedAt
+            }
+            try persistAndPublish(updated)
+            return leadFrameURL
+        } catch {
+            try? fileManager.removeItem(at: leadFrameURL)
+            if let archivedLeadFrameURL {
+                try? fileManager.moveItem(at: archivedLeadFrameURL, to: leadFrameURL)
+            }
+            throw error
+        }
     }
 
     func deleteFrame(at url: URL, in session: SessionRecord) throws {
@@ -184,7 +255,12 @@ final class SessionStore: ObservableObject {
         for url in uniqueURLs {
             try fileManager.removeItem(at: url)
         }
-        refreshAllSessions()
+
+        var updated = session
+        for url in uniqueURLs {
+            updated.frameDurationOverrides.removeValue(forKey: url.lastPathComponent)
+        }
+        try persistAndPublish(updated)
     }
 
     private func validateFrameURL(_ url: URL, in session: SessionRecord) throws {
@@ -201,7 +277,7 @@ final class SessionStore: ObservableObject {
             throw NSError(
                 domain: "TimelapseX.SessionStore",
                 code: 202,
-                userInfo: [NSLocalizedDescriptionKey: "Only captured JPG frames can be deleted."]
+                userInfo: [NSLocalizedDescriptionKey: "Only session JPG frames can be deleted."]
             )
         }
         guard fileManager.fileExists(atPath: url.path) else {
@@ -227,6 +303,14 @@ final class SessionStore: ObservableObject {
 
     private func refreshAllSessions() {
         allSessions = (try? Self.loadAllSessions(using: fileManager, decoder: decoder)) ?? []
+    }
+
+    private func persistAndPublish(_ session: SessionRecord) throws {
+        try Self.persistSession(session, using: fileManager, encoder: encoder)
+        if session.id == activeSession.id {
+            activeSession = session
+        }
+        refreshAllSessions()
     }
 
     private static func prepareSessionsDirectory(using fileManager: FileManager) throws {
@@ -298,6 +382,7 @@ final class SessionStore: ObservableObject {
             nextSequence: session.nextSequence,
             photosAlbumIdentifier: session.photosAlbumIdentifier,
             frameDurationSeconds: session.frameDurationSeconds,
+            frameDurationOverrides: session.frameDurationOverrides,
             lastCaptureAt: session.lastCaptureAt
         )
         let data = try encoder.encode(persisted)
@@ -348,5 +433,6 @@ private struct PersistedSession: Codable {
     let nextSequence: Int
     let photosAlbumIdentifier: String?
     let frameDurationSeconds: Double?
+    let frameDurationOverrides: [String: Double]?
     let lastCaptureAt: Date?
 }

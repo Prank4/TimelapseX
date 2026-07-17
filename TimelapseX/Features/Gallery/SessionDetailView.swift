@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 import Photos
+import PhotosUI
 import AVKit
 import UIKit
 
@@ -32,12 +33,14 @@ struct SessionDetailView: View {
     @State private var selectedFrameIndex: Int?
     @State private var isSelectingFrames = false
     @State private var selectedFrameURLs: Set<URL> = []
+    @State private var frameDurationOverrides: [String: Double] = [:]
     @State private var deletedFrame: DeletedFrame?
-    @State private var frameDurationText = ""
     @State private var showTimelapseSettings = false
+    @State private var showPhotoImporter = false
+    @State private var selectedPhotoForImport: PhotosPickerItem?
+    @State private var isImportingPhoto = false
     @State private var pinchStartingColumnCount: Int?
     @AppStorage("gallery.gridColumnCount") private var gridColumnCount = 4
-    @FocusState private var durationFieldFocused: Bool
 
     enum VideoSaveState: Equatable {
         case idle, saving, success, failed(String)
@@ -45,10 +48,12 @@ struct SessionDetailView: View {
 
     private var columns: [GridItem] {
         Array(
-            repeating: GridItem(.flexible(), spacing: 6),
+            repeating: GridItem(.flexible(), spacing: frameGridSpacing),
             count: GalleryGridLayoutPolicy.clampedColumnCount(gridColumnCount)
         )
     }
+
+    private let frameGridSpacing: CGFloat = 1
 
     init(session: SessionRecord, store: SessionStore) {
         self.session = session
@@ -102,9 +107,13 @@ struct SessionDetailView: View {
                 checkExportedVideo()
             }
             .onChange(of: store.allSessions) { _, _ in
-                syncExportSettingsFromSession(updateText: !durationFieldFocused)
+                syncExportSettingsFromSession()
                 loadFrameURLs()
                 checkExportedVideo()
+            }
+            .onChange(of: selectedPhotoForImport) { _, item in
+                guard let item else { return }
+                Task { await importPhotoAtBeginning(item) }
             }
             .onChange(of: exporter.state) { _, newValue in
                 handleExporterStateChange(newValue)
@@ -115,14 +124,23 @@ struct SessionDetailView: View {
             .sheet(isPresented: $showTimelapseSettings) {
                 timelapseSettingsSheet
             }
+            .photosPicker(
+                isPresented: $showPhotoImporter,
+                selection: $selectedPhotoForImport,
+                matching: .images,
+                photoLibrary: .shared()
+            )
             .fullScreenCover(isPresented: framePagerPresentedBinding) {
                 FramePagerView(
                     frameURLs: $frameURLs,
                     initialIndex: selectedFrameIndex ?? 0,
                     deletedFrame: $deletedFrame,
                     deleteErrorMessage: $frameDeleteError,
+                    durationOverrides: $frameDurationOverrides,
+                    globalFrameDuration: exportSettings.frameDurationSeconds,
                     onDelete: deleteFrame,
-                    onUndoDelete: undoDeletedFrame
+                    onUndoDelete: undoDeletedFrame,
+                    onUpdateDuration: updateFrameDurationOverride
                 )
             }
             .overlay(alignment: .bottom) {
@@ -215,6 +233,16 @@ struct SessionDetailView: View {
 
             Divider()
 
+            Button {
+                showPhotoImporter = true
+            } label: {
+                Label(
+                    isImportingPhoto ? "Importing Photo…" : "Import Photo as First Frame",
+                    systemImage: "photo.badge.plus"
+                )
+            }
+            .disabled(isImportingPhoto || isExporting)
+
             if liveStatus == .active || liveStatus == .closed {
                 Button {
                     Task { await saveAction.save(session: store.allSessions.first(where: { $0.id == session.id }) ?? session) }
@@ -238,7 +266,7 @@ struct SessionDetailView: View {
     // MARK: - Subviews
 
     private var framesGrid: some View {
-        LazyVGrid(columns: columns, spacing: 6) {
+        LazyVGrid(columns: columns, spacing: frameGridSpacing) {
             ForEach(Array(frameURLs.enumerated()), id: \.element.absoluteString) { index, url in
                 Button {
                     if isSelectingFrames {
@@ -248,12 +276,13 @@ struct SessionDetailView: View {
                     }
                 } label: {
                     FrameThumbnail(url: url)
-                        .aspectRatio(1, contentMode: .fill)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .aspectRatio(1, contentMode: .fit)
                         .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                         .overlay {
                             if selectedFrameURLs.contains(url) {
-                                RoundedRectangle(cornerRadius: 6)
+                                RoundedRectangle(cornerRadius: 4)
                                     .fill(.black.opacity(0.28))
                             }
                         }
@@ -266,6 +295,17 @@ struct SessionDetailView: View {
                                     .padding(5)
                             }
                         }
+                        .overlay(alignment: .topLeading) {
+                            if frameDurationOverrides[url.lastPathComponent] != nil {
+                                Image(systemName: "clock.fill")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .padding(5)
+                                    .background(.orange, in: Circle())
+                                    .padding(5)
+                                    .accessibilityLabel("Custom frame duration")
+                            }
+                        }
                         .overlay(alignment: .bottomLeading) {
                             Text("\(index + 1)")
                                 .font(.caption2.weight(.bold))
@@ -275,12 +315,15 @@ struct SessionDetailView: View {
                                 .background(.black.opacity(0.62), in: Capsule())
                                 .padding(5)
                         }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 4)
+                                .strokeBorder(Color(.separator), lineWidth: 1)
+                        }
                 }
                 .buttonStyle(.plain)
             }
         }
         .simultaneousGesture(gridMagnificationGesture)
-        .padding(.horizontal, 12)
         .padding(.bottom, 16)
     }
 
@@ -328,6 +371,13 @@ struct SessionDetailView: View {
             Form {
                 Section("Timing") {
                     frameDurationControl
+
+                    HStack {
+                        Label("Frame Overrides", systemImage: "clock.badge")
+                        Spacer()
+                        Text("\(activeFrameDurationOverrideCount)")
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Export") {
@@ -385,39 +435,44 @@ struct SessionDetailView: View {
                         .font(.subheadline.weight(.medium))
                 }
                 Spacer()
-                TextField("0.01", text: $frameDurationText)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.trailing)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 86)
-                    .focused($durationFieldFocused)
-                    .onSubmit(commitFrameDurationText)
-                    .onChange(of: frameDurationText) { _, newValue in
-                        updateFrameDurationFromText(newValue)
-                    }
-                    .onChange(of: durationFieldFocused) { _, isFocused in
-                        if !isFocused {
-                            commitFrameDurationText()
-                        }
-                    }
-                    .toolbar {
-                        ToolbarItemGroup(placement: .keyboard) {
-                            Spacer()
-                            Button("Done") {
-                                durationFieldFocused = false
-                            }
-                        }
-                    }
             }
 
             Slider(
                 value: Binding(
                     get: { exportSettings.frameDurationSeconds },
-                    set: { updateFrameDuration($0, updateText: true) }
+                    set: { updateFrameDuration($0) }
                 ),
                 in: SessionRecord.minimumFrameDurationSeconds...SessionRecord.maximumFrameDurationSeconds,
                 step: 0.01
             )
+
+            HStack {
+                Text("0.01 s")
+                Spacer()
+                Text("0.10 s")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            Divider()
+
+            HStack {
+                Label("Estimated Timelapse Duration", systemImage: "clock")
+                    .font(.subheadline)
+                Spacer()
+                Text(formattedTimelapseDuration(
+                    exportSettings.estimatedDuration(
+                        forFrameFilenames: frameURLs.map(\.lastPathComponent),
+                        overrides: frameDurationOverrides
+                    )
+                ))
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+            }
+
+            Text(estimatedDurationExplanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -520,6 +575,20 @@ struct SessionDetailView: View {
         return nil
     }
 
+    private var activeFrameDurationOverrideCount: Int {
+        frameURLs.reduce(into: 0) { count, url in
+            if frameDurationOverrides[url.lastPathComponent] != nil {
+                count += 1
+            }
+        }
+    }
+
+    private var estimatedDurationExplanation: String {
+        let base = "Based on \(frameURLs.count) image\(frameURLs.count == 1 ? "" : "s") and a global duration of \(formattedFrameDuration(exportSettings.frameDurationSeconds))."
+        guard activeFrameDurationOverrideCount > 0 else { return base }
+        return "\(base) Includes \(activeFrameDurationOverrideCount) frame-specific override\(activeFrameDurationOverrideCount == 1 ? "" : "s")."
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "photo.on.rectangle.angled")
@@ -544,40 +613,83 @@ struct SessionDetailView: View {
         }
     }
 
-    private func syncExportSettingsFromSession(updateText: Bool = true) {
+    private func syncExportSettingsFromSession() {
         let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
         let duration = SessionRecord.clampedFrameDuration(liveSession.frameDurationSeconds)
         exportSettings.frameDurationSeconds = duration
-        if updateText {
-            frameDurationText = formattedDurationInput(duration)
-        }
+        frameDurationOverrides = liveSession.frameDurationOverrides
     }
 
-    private func updateFrameDuration(_ duration: Double, updateText: Bool) {
+    private func updateFrameDuration(_ duration: Double) {
         let clamped = SessionRecord.clampedFrameDuration(duration)
         exportSettings.frameDurationSeconds = clamped
-        if updateText {
-            frameDurationText = formattedDurationInput(clamped)
-        }
 
         let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
         try? store.updateFrameDurationSeconds(clamped, for: liveSession)
     }
 
-    private func commitFrameDurationText() {
-        let sanitized = frameDurationText.replacingOccurrences(of: ",", with: ".")
-        guard let duration = Double(sanitized) else {
-            frameDurationText = formattedDurationInput(exportSettings.frameDurationSeconds)
-            return
+    private func updateFrameDurationOverride(_ duration: Double?, for url: URL) -> String? {
+        do {
+            let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+            try store.updateFrameDurationOverride(duration, forFrameAt: url, in: liveSession)
+            if let duration {
+                frameDurationOverrides[url.lastPathComponent] = FrameDurationPolicy.clampedOverride(duration)
+            } else {
+                frameDurationOverrides.removeValue(forKey: url.lastPathComponent)
+            }
+            invalidateExportedVideo(for: liveSession)
+            checkExportedVideo()
+            return nil
+        } catch {
+            return error.localizedDescription
         }
-        updateFrameDuration(duration, updateText: true)
     }
 
-    private func updateFrameDurationFromText(_ text: String) {
-        guard durationFieldFocused else { return }
-        let sanitized = text.replacingOccurrences(of: ",", with: ".")
-        guard let duration = Double(sanitized) else { return }
-        updateFrameDuration(duration, updateText: false)
+    private func importPhotoAtBeginning(_ item: PhotosPickerItem) async {
+        guard !isImportingPhoto else { return }
+        isImportingPhoto = true
+        defer {
+            isImportingPhoto = false
+            selectedPhotoForImport = nil
+        }
+
+        do {
+            guard let sourceData = try await item.loadTransferable(type: Data.self) else {
+                throw NSError(
+                    domain: "TimelapseX.PhotoImport",
+                    code: 401,
+                    userInfo: [NSLocalizedDescriptionKey: "The selected photo could not be loaded from Photos."]
+                )
+            }
+
+            let jpegData = try await Task.detached(priority: .userInitiated) {
+                guard let image = UIImage(data: sourceData),
+                      let data = image.jpegData(compressionQuality: 1) else {
+                    throw NSError(
+                        domain: "TimelapseX.PhotoImport",
+                        code: 402,
+                        userInfo: [NSLocalizedDescriptionKey: "The selected photo could not be converted to JPEG."]
+                    )
+                }
+                return data
+            }.value
+
+            let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+            try store.importFrameAtBeginning(imageData: jpegData, in: liveSession)
+            deletedFrame = nil
+            invalidateExportedVideo(for: liveSession)
+            loadFrameURLs()
+            checkExportedVideo()
+            operationAlert = SessionOperationAlert(
+                title: "Photo Imported",
+                message: "The selected photo is now the first frame in this session."
+            )
+        } catch {
+            operationAlert = SessionOperationAlert(
+                title: "Import Failed",
+                message: error.localizedDescription
+            )
+        }
     }
 
     private func deleteFrame(_ url: URL) -> DeletedFrame? {
@@ -585,6 +697,7 @@ struct SessionDetailView: View {
 
         do {
             let data = try Data(contentsOf: url)
+            let durationOverride = frameDurationOverrides[url.lastPathComponent]
             let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
             try store.deleteFrame(at: url, in: liveSession)
             guard !FileManager.default.fileExists(atPath: url.path) else {
@@ -594,8 +707,14 @@ struct SessionDetailView: View {
                     userInfo: [NSLocalizedDescriptionKey: "The frame could not be removed from disk."]
                 )
             }
-            let deleted = DeletedFrame(url: url, data: data, index: index)
+            let deleted = DeletedFrame(
+                url: url,
+                data: data,
+                index: index,
+                durationOverride: durationOverride
+            )
             deletedFrame = deleted
+            frameDurationOverrides.removeValue(forKey: url.lastPathComponent)
             invalidateExportedVideo(for: liveSession)
             loadFrameURLs()
             checkExportedVideo()
@@ -626,6 +745,9 @@ struct SessionDetailView: View {
         do {
             let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
             try store.deleteFrames(at: urls, in: liveSession)
+            for url in urls {
+                frameDurationOverrides.removeValue(forKey: url.lastPathComponent)
+            }
             deletedFrame = nil
             endFrameSelection()
             invalidateExportedVideo(for: liveSession)
@@ -640,6 +762,14 @@ struct SessionDetailView: View {
         do {
             try frame.data.write(to: frame.url, options: .atomic)
             let liveSession = store.allSessions.first(where: { $0.id == session.id }) ?? session
+            if let durationOverride = frame.durationOverride {
+                try store.updateFrameDurationOverride(
+                    durationOverride,
+                    forFrameAt: frame.url,
+                    in: liveSession
+                )
+                frameDurationOverrides[frame.url.lastPathComponent] = durationOverride
+            }
             invalidateExportedVideo(for: liveSession)
             deletedFrame = nil
             loadFrameURLs()
@@ -767,10 +897,6 @@ struct SessionDetailView: View {
         return formatter.string(from: session.createdAt)
     }
 
-    private func formattedDurationInput(_ duration: Double) -> String {
-        String(format: "%.2f", duration)
-    }
-
     private func formattedFrameDuration(_ duration: Double) -> String {
         if duration < 1 {
             return "\(Int((duration * 1000).rounded())) ms"
@@ -784,6 +910,25 @@ struct SessionDetailView: View {
         }
         return String(format: "%.1f", fps)
     }
+
+    private func formattedTimelapseDuration(_ duration: TimeInterval) -> String {
+        if duration < 1 {
+            return String(format: "%.2f s", duration)
+        }
+
+        let totalSeconds = Int(duration.rounded())
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return "\(hours)h \(minutes)m \(seconds)s"
+        }
+        if minutes > 0 {
+            return "\(minutes)m \(seconds)s"
+        }
+        return "\(seconds)s"
+    }
 }
 
 private struct DeletedFrame: Identifiable, Equatable {
@@ -791,6 +936,7 @@ private struct DeletedFrame: Identifiable, Equatable {
     let url: URL
     let data: Data
     let index: Int
+    let durationOverride: Double?
 }
 
 private struct SessionOperationAlert: Identifiable, Equatable {
@@ -924,26 +1070,37 @@ private struct FramePagerView: View {
     let initialIndex: Int
     @Binding var deletedFrame: DeletedFrame?
     @Binding var deleteErrorMessage: String?
+    @Binding var durationOverrides: [String: Double]
+    let globalFrameDuration: Double
     let onDelete: (URL) -> DeletedFrame?
     let onUndoDelete: (DeletedFrame) -> Void
+    let onUpdateDuration: (Double?, URL) -> String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedIndex: Int
+    @State private var showFrameTimingSettings = false
+    @State private var durationErrorMessage: String?
 
     init(
         frameURLs: Binding<[URL]>,
         initialIndex: Int,
         deletedFrame: Binding<DeletedFrame?>,
         deleteErrorMessage: Binding<String?>,
+        durationOverrides: Binding<[String: Double]>,
+        globalFrameDuration: Double,
         onDelete: @escaping (URL) -> DeletedFrame?,
-        onUndoDelete: @escaping (DeletedFrame) -> Void
+        onUndoDelete: @escaping (DeletedFrame) -> Void,
+        onUpdateDuration: @escaping (Double?, URL) -> String?
     ) {
         self._frameURLs = frameURLs
         self.initialIndex = initialIndex
         self._deletedFrame = deletedFrame
         self._deleteErrorMessage = deleteErrorMessage
+        self._durationOverrides = durationOverrides
+        self.globalFrameDuration = globalFrameDuration
         self.onDelete = onDelete
         self.onUndoDelete = onUndoDelete
+        self.onUpdateDuration = onUpdateDuration
         self._selectedIndex = State(initialValue: initialIndex)
     }
 
@@ -984,6 +1141,9 @@ private struct FramePagerView: View {
                 selectedIndex = urls.count - 1
             }
         }
+        .sheet(isPresented: $showFrameTimingSettings) {
+            frameTimingSettingsSheet
+        }
     }
 
     private var topControls: some View {
@@ -1022,6 +1182,23 @@ private struct FramePagerView: View {
         VStack {
             Spacer()
             HStack {
+                Button {
+                    showFrameTimingSettings = true
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: selectedFrameHasOverride ? "clock.fill" : "clock")
+                            .font(.headline)
+                        Text(selectedFrameHasOverride ? selectedFrameDurationText : "Global")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(width: 72, height: 54)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(frameURLs.isEmpty)
+
                 Spacer()
                 Button(role: .destructive) {
                     deleteSelectedFrame()
@@ -1048,6 +1225,127 @@ private struct FramePagerView: View {
         } message: {
             Text(deleteErrorMessage ?? "Unable to delete this frame.")
         }
+    }
+
+    private var selectedFrameURL: URL? {
+        guard frameURLs.indices.contains(selectedIndex) else { return nil }
+        return frameURLs[selectedIndex]
+    }
+
+    private var selectedFrameHasOverride: Bool {
+        guard let selectedFrameURL else { return false }
+        return durationOverrides[selectedFrameURL.lastPathComponent] != nil
+    }
+
+    private var selectedFrameDurationText: String {
+        guard let selectedFrameURL,
+              let duration = durationOverrides[selectedFrameURL.lastPathComponent] else {
+            return formattedDuration(globalFrameDuration)
+        }
+        return formattedDuration(duration)
+    }
+
+    private var frameTimingSettingsSheet: some View {
+        NavigationStack {
+            Form {
+                if let selectedFrameURL {
+                    Section("Frame \(selectedIndex + 1)") {
+                        LabeledContent(
+                            "Global Duration",
+                            value: formattedDuration(globalFrameDuration)
+                        )
+                        LabeledContent(
+                            "Effective Duration",
+                            value: selectedFrameDurationText
+                        )
+                    }
+
+                    Section("Frame-Specific Duration") {
+                        if selectedFrameHasOverride {
+                            Text("This frame uses its own duration.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("This frame currently follows the global duration. Moving the slider creates an override.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Slider(
+                            value: frameOverrideBinding(for: selectedFrameURL),
+                            in: FrameDurationPolicy.minimumOverrideDuration...FrameDurationPolicy.maximumOverrideDuration,
+                            step: FrameDurationPolicy.overrideStep
+                        )
+
+                        HStack {
+                            Text("0.5 s")
+                            Spacer()
+                            Text("5.0 s")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    Section {
+                        Button("Reset to Global Duration") {
+                            applyDurationOverride(nil, to: selectedFrameURL)
+                        }
+                        .disabled(!selectedFrameHasOverride)
+                    }
+                }
+            }
+            .navigationTitle("Frame Duration")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        showFrameTimingSettings = false
+                    }
+                }
+            }
+            .alert("Duration Update Failed", isPresented: Binding(
+                get: { durationErrorMessage != nil },
+                set: { if !$0 { durationErrorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(durationErrorMessage ?? "Unable to update this frame's duration.")
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func frameOverrideBinding(for url: URL) -> Binding<Double> {
+        Binding(
+            get: {
+                durationOverrides[url.lastPathComponent]
+                    ?? FrameDurationPolicy.minimumOverrideDuration
+            },
+            set: { value in
+                applyDurationOverride(value, to: url)
+            }
+        )
+    }
+
+    private func applyDurationOverride(_ duration: Double?, to url: URL) {
+        let clamped = duration.map(FrameDurationPolicy.clampedOverride)
+        if let errorMessage = onUpdateDuration(clamped, url) {
+            durationErrorMessage = errorMessage
+            return
+        }
+
+        if let clamped {
+            durationOverrides[url.lastPathComponent] = clamped
+        } else {
+            durationOverrides.removeValue(forKey: url.lastPathComponent)
+        }
+    }
+
+    private func formattedDuration(_ duration: Double) -> String {
+        if duration < 1 {
+            return "\(Int((duration * 1_000).rounded())) ms"
+        }
+        return String(format: "%.1f s", duration)
     }
 
     private var emptyState: some View {
@@ -1149,6 +1447,8 @@ private struct FrameThumbnail: View {
                     }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .task { await loadImage() }
         .onDisappear { image = nil }
     }

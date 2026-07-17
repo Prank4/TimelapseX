@@ -102,6 +102,34 @@ struct SettingsView: View {
                 }
 
                 Section("Session") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle(
+                            "Auto-Start New Session",
+                            isOn: $settingsStore.automaticSessionRotationEnabled
+                        )
+                        Text(
+                            "Create a new session after \(formattedInactivityMinutes(settingsStore.sessionInactivityMinutes)) without a successful capture. Empty sessions are not replaced."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        Slider(
+                            value: $settingsStore.sessionInactivityMinutes,
+                            in: SessionRotationPolicy.minimumInactivityMinutes...SessionRotationPolicy.maximumInactivityMinutes,
+                            step: SessionRotationPolicy.inactivityMinuteStep
+                        )
+                        .disabled(!settingsStore.automaticSessionRotationEnabled)
+
+                        HStack {
+                            Text("5 min")
+                            Spacer()
+                            Text("60 min")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+
                     statusRow(title: "Active Session", value: store.activeSession.id)
                     statusRow(title: "Next Frame", value: "\(store.activeSession.nextSequence)")
                     statusRow(title: "Stored Frames", value: "\(store.activeSession.frameCount)")
@@ -200,5 +228,9 @@ struct SettingsView: View {
             return "\(Int((seconds * 1000).rounded())) ms"
         }
         return "\(String(format: "%.2f", seconds)) s"
+    }
+
+    private func formattedInactivityMinutes(_ minutes: Double) -> String {
+        "\(Int(SessionRotationPolicy.clampedInactivityMinutes(minutes))) minutes"
     }
 }

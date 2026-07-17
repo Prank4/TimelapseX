@@ -99,6 +99,21 @@ final class CameraSettingsStore: ObservableObject {
             UserDefaults.standard.set(Self.clampedIntervalCaptureSeconds(intervalCaptureSeconds), forKey: "settings.intervalCaptureSeconds")
         }
     }
+
+    @Published var automaticSessionRotationEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(automaticSessionRotationEnabled, forKey: "settings.automaticSessionRotationEnabled")
+        }
+    }
+
+    @Published var sessionInactivityMinutes: Double {
+        didSet {
+            UserDefaults.standard.set(
+                SessionRotationPolicy.clampedInactivityMinutes(sessionInactivityMinutes),
+                forKey: "settings.sessionInactivityMinutes"
+            )
+        }
+    }
     
     @Published var cameraPermissionStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
     @Published var photosPermissionStatus: PHAuthorizationStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
@@ -116,6 +131,15 @@ final class CameraSettingsStore: ObservableObject {
         self.intervalCaptureEnabled = UserDefaults.standard.bool(forKey: "settings.intervalCaptureEnabled")
         let savedInterval = UserDefaults.standard.object(forKey: "settings.intervalCaptureSeconds") as? Double
         self.intervalCaptureSeconds = Self.clampedIntervalCaptureSeconds(savedInterval ?? 2.0)
+        self.automaticSessionRotationEnabled = (
+            UserDefaults.standard.object(forKey: "settings.automaticSessionRotationEnabled") as? Bool
+        ) ?? true
+        let savedInactivityMinutes = UserDefaults.standard.object(
+            forKey: "settings.sessionInactivityMinutes"
+        ) as? Double
+        self.sessionInactivityMinutes = SessionRotationPolicy.clampedInactivityMinutes(
+            savedInactivityMinutes ?? SessionRotationPolicy.defaultInactivityMinutes
+        )
         
         NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification,

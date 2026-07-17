@@ -75,6 +75,17 @@ final class CameraViewModel: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
 
+        Publishers.CombineLatest(
+            settingsStore.$automaticSessionRotationEnabled,
+            settingsStore.$sessionInactivityMinutes
+        )
+        .dropFirst()
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _, _ in
+            self?.scheduleInactivityRotation()
+        }
+        .store(in: &cancellables)
+
         DispatchQueue.main.async { [weak self] in
             self?.scheduleInactivityRotation()
         }
@@ -166,8 +177,11 @@ final class CameraViewModel: NSObject, ObservableObject {
         statusMessage = "Capture unavailable in Simulator"
         #else
         do {
-            if try sessionStore.rotateActiveSessionIfInactive() {
-                statusMessage = "New session started after 5 minutes of inactivity"
+            if try sessionStore.rotateActiveSessionIfInactive(
+                isEnabled: settingsStore.automaticSessionRotationEnabled,
+                inactivityInterval: automaticSessionRotationInterval
+            ) {
+                statusMessage = automaticSessionRotationStatusMessage
             }
         } catch {
             statusMessage = error.localizedDescription
@@ -237,8 +251,11 @@ final class CameraViewModel: NSObject, ObservableObject {
         inactivityRotationWorkItem = nil
 
         do {
-            if try sessionStore.rotateActiveSessionIfInactive() {
-                statusMessage = "New session started after 5 minutes of inactivity"
+            if try sessionStore.rotateActiveSessionIfInactive(
+                isEnabled: settingsStore.automaticSessionRotationEnabled,
+                inactivityInterval: automaticSessionRotationInterval
+            ) {
+                statusMessage = automaticSessionRotationStatusMessage
                 return
             }
         } catch {
@@ -246,7 +263,10 @@ final class CameraViewModel: NSObject, ObservableObject {
             return
         }
 
-        guard let deadline = sessionStore.activeSessionInactivityDeadline() else { return }
+        guard let deadline = sessionStore.activeSessionInactivityDeadline(
+            isEnabled: settingsStore.automaticSessionRotationEnabled,
+            inactivityInterval: automaticSessionRotationInterval
+        ) else { return }
         let workItem = DispatchWorkItem { [weak self] in
             self?.handleInactivityDeadline()
         }
@@ -268,6 +288,19 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
 
         scheduleInactivityRotation()
+    }
+
+    private var automaticSessionRotationInterval: TimeInterval {
+        SessionRotationPolicy.inactivityIntervalSeconds(
+            minutes: settingsStore.sessionInactivityMinutes
+        )
+    }
+
+    private var automaticSessionRotationStatusMessage: String {
+        let minutes = Int(SessionRotationPolicy.clampedInactivityMinutes(
+            settingsStore.sessionInactivityMinutes
+        ))
+        return "New session started after \(minutes) minutes of inactivity"
     }
 
     private func startLevelerUpdates() {

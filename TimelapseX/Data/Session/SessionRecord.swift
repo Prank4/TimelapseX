@@ -8,9 +8,9 @@
 import Foundation
 
 struct SessionRecord: Codable, Identifiable, Equatable {
-    nonisolated static let defaultFrameDurationSeconds = 1.0 / 24.0
-    nonisolated static let minimumFrameDurationSeconds = 0.01
-    nonisolated static let maximumFrameDurationSeconds = 10.0
+    nonisolated static let defaultFrameDurationSeconds = FrameDurationPolicy.defaultGlobalDuration
+    nonisolated static let minimumFrameDurationSeconds = FrameDurationPolicy.minimumGlobalDuration
+    nonisolated static let maximumFrameDurationSeconds = FrameDurationPolicy.maximumGlobalDuration
 
     let id: String
     let createdAt: Date
@@ -18,6 +18,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var nextSequence: Int
     var photosAlbumIdentifier: String?
     var frameDurationSeconds: Double
+    var frameDurationOverrides: [String: Double]
     var lastCaptureAt: Date?
 
     init(
@@ -27,6 +28,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         nextSequence: Int,
         photosAlbumIdentifier: String?,
         frameDurationSeconds: Double = Self.defaultFrameDurationSeconds,
+        frameDurationOverrides: [String: Double] = [:],
         lastCaptureAt: Date? = nil
     ) {
         self.id = id
@@ -35,6 +37,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         self.nextSequence = nextSequence
         self.photosAlbumIdentifier = photosAlbumIdentifier
         self.frameDurationSeconds = Self.clampedFrameDuration(frameDurationSeconds)
+        self.frameDurationOverrides = frameDurationOverrides.mapValues(FrameDurationPolicy.clampedOverride)
         self.lastCaptureAt = lastCaptureAt
     }
 
@@ -45,6 +48,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         case nextSequence
         case photosAlbumIdentifier
         case frameDurationSeconds
+        case frameDurationOverrides
         case lastCaptureAt
     }
 
@@ -57,6 +61,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         photosAlbumIdentifier = try container.decodeIfPresent(String.self, forKey: .photosAlbumIdentifier)
         let duration = try container.decodeIfPresent(Double.self, forKey: .frameDurationSeconds) ?? Self.defaultFrameDurationSeconds
         frameDurationSeconds = Self.clampedFrameDuration(duration)
+        let overrides = try container.decodeIfPresent([String: Double].self, forKey: .frameDurationOverrides) ?? [:]
+        frameDurationOverrides = overrides.mapValues(FrameDurationPolicy.clampedOverride)
         lastCaptureAt = try container.decodeIfPresent(Date.self, forKey: .lastCaptureAt)
     }
 
@@ -68,6 +74,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         try container.encode(nextSequence, forKey: .nextSequence)
         try container.encodeIfPresent(photosAlbumIdentifier, forKey: .photosAlbumIdentifier)
         try container.encode(frameDurationSeconds, forKey: .frameDurationSeconds)
+        try container.encode(frameDurationOverrides, forKey: .frameDurationOverrides)
         try container.encodeIfPresent(lastCaptureAt, forKey: .lastCaptureAt)
     }
 
@@ -90,6 +97,6 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     }
 
     nonisolated static func clampedFrameDuration(_ value: Double) -> Double {
-        min(max(value, minimumFrameDurationSeconds), maximumFrameDurationSeconds)
+        FrameDurationPolicy.clampedGlobal(value)
     }
 }
