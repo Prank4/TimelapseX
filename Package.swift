@@ -21,7 +21,7 @@ let package = Package(
                 "SessionStatus.swift",
                 "SessionStore.swift"
             ],
-            sources: ["SessionRotationPolicy.swift"]
+            sources: ["FrameDurationPolicy.swift", "SessionRotationPolicy.swift"]
         ),
         .target(
             name: "TimelapseXGalleryLogic",

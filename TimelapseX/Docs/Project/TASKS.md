@@ -57,6 +57,13 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 - [x] Move the full-screen undo banner above the delete control.
 - [x] Show sequence numbers on Gallery thumbnails.
 - [x] Support pinch-controlled Gallery density from two through eight images per row.
+- [x] Prevent Gallery tiles from overlapping and add four-sided dividers between photos.
+- [x] Show a live estimated output duration in Timelapse Settings.
+- [x] Import a Photos image as the first frame of any gallery session.
+- [x] Replace the timing text field with a stepped 0.01–0.10 second slider.
+- [x] Persist per-frame 0.5–5.0 second duration overrides with reset-to-global behavior.
+- [x] Include per-frame overrides in estimated and exported timelapse duration.
+- [x] Add a persisted automatic-session toggle and 5–60 minute inactivity slider in five-minute steps.
 
 ## Validation
 Run after 0.0.x and again after 0.4.x.

@@ -36,4 +36,24 @@ struct SessionRotationPolicyTests {
             now: lastCapture.addingTimeInterval(600)
         ))
     }
+
+    @Test func disabledAutomaticRotationNeverRotates() {
+        #expect(!SessionRotationPolicy.shouldRotate(
+            frameCount: 1,
+            lastCaptureAt: lastCapture,
+            now: lastCapture.addingTimeInterval(3_600),
+            isEnabled: false
+        ))
+    }
+
+    @Test func inactivityMinutesClampToFiveMinuteSteps() {
+        #expect(SessionRotationPolicy.clampedInactivityMinutes(1) == 5)
+        #expect(SessionRotationPolicy.clampedInactivityMinutes(7) == 5)
+        #expect(SessionRotationPolicy.clampedInactivityMinutes(8) == 10)
+        #expect(SessionRotationPolicy.clampedInactivityMinutes(90) == 60)
+    }
+
+    @Test func inactivityMinutesConvertToSeconds() {
+        #expect(SessionRotationPolicy.inactivityIntervalSeconds(minutes: 15) == 900)
+    }
 }

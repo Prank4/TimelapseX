@@ -49,6 +49,22 @@ Implementation notes and handoff history for the current project snapshot.
 - Possible breakpoints: A 3,072-pixel full-screen preview is display-oriented and intentionally does not expose every source pixel; exporting and saving continue to use original JPEGs. ImageIO decoding remains synchronous within its actor, so a damaged or unusually slow file can delay later gallery loads without blocking the main thread.
 - Edge cases: Canceled off-screen requests are skipped before decode; invalid images remain placeholders; small images are never upscaled; deleted first frames no longer leave a blank session thumbnail; pinch density is clamped and persisted from two through eight columns.
 - Suggested manual tests: Rapidly scroll a long session from beginning to end several times while watching memory in Instruments, rapidly swipe forward and backward in full-screen mode, delete and undo to confirm the banner sits above the trash button, verify thumbnail numbers stay aligned after deletion, and pinch in/out to confirm two-through-eight-column layouts persist after reopening the session.
+- Follow-up layout fix: Gallery tiles now enforce square bounds before clipping, use matching eight-point row/column spacing, and draw a one-point system separator around all four sides. Verify at every pinch density that loaded images remain inside their own cells and every neighboring pair has a visible gap/divider.
+- Gallery edge alignment: Removed the grid's outer leading and trailing inset while preserving the internal eight-point spacing and tile borders.
+- Timelapse duration preview: Timing settings now show a live estimated output duration calculated from the current on-disk frame count and clamped time-per-image value. Verify the estimate updates while typing and sliding, including sub-second, minute, and hour formats.
+- Photos import and timing range: Gallery session menus now use the system Photos picker to normalize one selected image to JPEG and place it at index 1 without overwriting earlier imports. Timing removed free-form input and now uses a 0.01–0.10 second slider in 0.01-second steps; existing out-of-range stored values clamp on load. Verify repeated imports remain before captured frames, the newest is first, exported video invalidates, and the live duration estimate updates at every slider step.
+
+## 0.4.3 — Per-Frame Timelapse Duration Overrides
+- Approach summary: Added filename-keyed duration overrides persisted in `session.json`, a tested timing policy for global fallback and cumulative presentation times, full-screen frame duration controls, grid override badges, reset-to-global behavior, override-aware estimates, and exporter session timing that ends at the calculated total duration.
+- Files modified/added:
+  - `TimelapseX/Data/Session/FrameDurationPolicy.swift` and `TimelapseXTests/FrameDurationPolicyTests.swift` — pure timing rules and regression coverage for fallback, override, reset, 0.5–5.0-second clamping/steps, totals, and presentation timestamps.
+  - `TimelapseX/Data/Session/SessionRecord.swift` and `SessionStore.swift` — backward-compatible override persistence, update API, deletion cleanup, undo support path, and imported-frame rename preservation.
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift` — clock badges, full-screen per-frame slider/reset UI, override count, and override-aware estimated duration.
+  - `TimelapseX/Features/Gallery/TimelapseExporter.swift` — cumulative per-frame presentation times and an explicit export end time.
+  - `Package.swift` and project documentation — test target and source-of-truth updates.
+- Possible breakpoints: AVAssetWriter duration should be verified on a real device/player because per-frame H.264 sample presentation can be rendered differently by third-party players; the writer now explicitly ends its session at the calculated total to preserve the last frame's hold duration.
+- Edge cases: Legacy sessions decode with no overrides; reset removes the filename key; deleted-frame undo restores its override; batch deletion removes overrides; repeated lead-photo imports move an existing override with the archived frame; stale override keys are ignored by estimates because only current frame filenames are summed.
+- Suggested manual tests: Give the first/middle/last frames different durations, verify clock badges and override count, reset one to global, relaunch and verify persistence, compare the displayed estimate to the sum, export and inspect frame transitions and final duration, delete/undo an overridden frame, and import a new lead frame over an overridden imported frame.
 
 ## 0.0.x Implementation Notes
 - Approach summary: scaffolded the camera core with a session store, local JPEG writes, append-only capture logging, and a SwiftUI tab shell that requests camera access on first launch.
@@ -142,3 +158,25 @@ Implementation notes and handoff history for the current project snapshot.
 - Possible breakpoints: Volume-button interception still depends on the hidden `MPVolumeView` and real device audio-session behavior, so simulator validation is limited.
 - Edge cases: Deleting the active session rotates immediately to a fresh session via `SessionStore.discardSession`; export resolution never upscales beyond the source image size.
 - Suggested manual tests: Capture with volume-up and volume-down on device, rapidly press/release both buttons, delete active and saved sessions from detail, export the same session at Native/1080p/720p and High/Standard/Compact quality, then verify the resulting `timelapse.mp4` dimensions and share/save flow.
+
+## 0.4.3 — Photos Import Presentation Hotfix
+- Approach summary: Replaced the `PhotosPicker` embedded directly in the session actions `Menu` with a normal menu button that triggers screen-level `.photosPicker` presentation. The menu/picker presentation collision could dismiss the menu without ever presenting Photos, leaving the import callback with no selection.
+- Files modified:
+  - `TimelapseX/Features/Gallery/SessionDetailView.swift`
+  - `TimelapseX/Docs/Shared/RULES.md`
+  - `TimelapseX/Docs/Project/engineering_notes.md`
+- Possible breakpoints: The picker still depends on PhotosUI being available and the selected asset being transferable as image data.
+- Edge cases: Cancelling the picker leaves the session unchanged; repeated imports preserve the previous first frame under a unique filename.
+- Suggested manual tests: Open a gallery session, choose **Import Photo as First Frame**, select an image, confirm the success alert and new frame 1, then repeat and confirm both imported images remain in the session.
+
+## 0.4.4 — Configurable Automatic Session Rotation
+- Approach summary: Added persisted Settings controls for automatic inactivity rotation, with a default-on toggle and a 5–60 minute slider in five-minute steps. Rotation bounds, clamping, disabled behavior, and minute conversion live in `SessionRotationPolicy`; `CameraViewModel` immediately cancels and reschedules its deadline whenever either setting changes.
+- Files modified:
+  - `TimelapseX/Data/Session/SessionRotationPolicy.swift`, `SessionStore.swift`, and `TimelapseXTests/SessionRotationPolicyTests.swift` — tested policy and enabled/interval lifecycle parameters.
+  - `TimelapseX/Data/Settings/CameraSettingsStore.swift` — persisted toggle and inactivity duration.
+  - `TimelapseX/Features/Settings/SettingsView.swift` — toggle, explanatory caption, and stepped slider.
+  - `TimelapseX/Features/Camera/CameraViewModel.swift` — live rescheduling and duration-aware status messages.
+  - Project documentation — configurable behavior and learned slider-policy rule.
+- Possible breakpoints: Deadline execution still depends on the app process running; background suspension can delay the work item until the app resumes.
+- Edge cases: Disabling cancels a pending deadline; enabling after the selected duration has already elapsed rotates immediately; empty sessions never rotate; legacy populated sessions continue using the newest frame modification date when no capture timestamp exists.
+- Suggested manual tests: Capture one frame, switch the toggle off past the selected deadline and confirm no rotation, turn it on and confirm immediate rotation, then test 5- and 10-minute selections and verify a new capture restarts the countdown.

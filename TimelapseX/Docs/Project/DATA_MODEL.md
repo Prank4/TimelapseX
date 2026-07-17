@@ -15,11 +15,12 @@ Everything is scoped to a session. Exactly one session is active at a time. A ne
 | `nextSequence` | `Int` | Per-session frame counter, starting at `1` and stored in `session.json`. |
 | `frameCount` | `Int` | Derived from the number of frame files in the folder. |
 | `photosAlbumIdentifier` | `String?` | `PHAssetCollection.localIdentifier`, set after a successful Save. |
-| `lastCaptureAt` | `Date?` | Timestamp of the latest successful frame, used to rotate populated sessions after five idle minutes. |
+| `lastCaptureAt` | `Date?` | Timestamp of the latest successful frame, used to rotate populated sessions after the configured idle duration. |
+| `frameDurationOverrides` | `[String: Double]` | Optional per-frame durations keyed by filename. Values are clamped to 0.5–5.0 seconds in 0.5-second steps. Missing keys inherit the session's global duration. |
 
-`session.json` stores `{ "id", "createdAt", "status", "nextSequence", "lastCaptureAt" }` plus optional Photos and timelapse timing metadata.
+`session.json` stores `{ "id", "createdAt", "status", "nextSequence", "lastCaptureAt", "frameDurationSeconds", "frameDurationOverrides" }` plus optional Photos metadata.
 
-A populated active session closes automatically five minutes after its latest successful capture and a fresh active session is created. Empty active sessions are never rotated by inactivity. Legacy sessions without `lastCaptureAt` use the newest frame file's modification date.
+A populated active session closes automatically after the configured capture-idle duration and a fresh active session is created. The feature defaults on at five minutes and supports 5–60 minutes in five-minute steps. Empty active sessions are never rotated by inactivity. Legacy sessions without `lastCaptureAt` use the newest frame file's modification date.
 
 ## 2. `CapturedFrame`
 In-memory only; the image file is the durable record.
@@ -34,6 +35,8 @@ In-memory only; the image file is the durable record.
 
 No Photos write happens at capture time. Photos only enters the flow when a session is explicitly saved.
 The capture trigger is the hardware volume buttons, not an in-app shutter button.
+
+A photo imported through the system Photos picker is normalized to JPEG and stored as `IMG_000000.jpg`, which sorts before captured frames. If another photo is imported, the previous lead frame is preserved as `IMG_000000_{UUID}.jpg` and the new selection takes the `IMG_000000.jpg` first position. Imported frames are local session frames and do not create capture-log entries.
 
 ## 3. `CameraConfiguration`
 Derived from device capabilities plus the current settings store.
@@ -71,6 +74,8 @@ Persisted `ObservableObject` backed by `UserDefaults`.
 | `gridOverlay` | enum `.off` / `.ruleOfThirds` / `.centerCross` | `settings.gridOverlay` | Preview-only overlay, never baked into saved JPEGs. |
 | `exposureFocusLocked` | `Bool` | `settings.exposureFocusLocked` | Default `false`. |
 | `whiteBalanceLocked` | `Bool` | `settings.whiteBalanceLocked` | Default `false`. |
+| `automaticSessionRotationEnabled` | `Bool` | `settings.automaticSessionRotationEnabled` | Default `true`; controls inactivity-based session creation. |
+| `sessionInactivityMinutes` | `Double` | `settings.sessionInactivityMinutes` | Default `5`; clamped to 5–60 minutes in five-minute steps. |
 | `cameraPermissionStatus` | computed | — | Read live from `AVCaptureDevice.authorizationStatus(for: .video)`. |
 | `photosPermissionStatus` | computed | — | Read live from `PHPhotoLibrary.authorizationStatus(for: .addOnly)`. |
 
@@ -81,6 +86,7 @@ In-memory per export operation.
 |---|---|---|
 | `sessionId` | `String` | The session whose frames will be compiled. |
 | `fps` | `Int` | Segmented control choice: 12, 24, 30, or 60. |
+| `frameDurationOverrides` | `[String: Double]` | Per-frame hold durations. Export presentation times are cumulative and use an override when present, otherwise the global frame duration. |
 | `resolution` | enum `.native` / `.hd1080` / `.hd720` | Maximum output long edge. Never upscales beyond source dimensions. |
 | `quality` | enum `.high` / `.standard` / `.compact` | Maps to the H.264 average bitrate used by `AVAssetWriter`. |
 | `outputURL` | `URL` | `Sessions/{sessionId}/timelapse.mp4`. |
@@ -101,6 +107,8 @@ Application Support/
 ```
 
 The `Sessions/` tree should be excluded from backups.
+
+Deleting a frame removes its duration override; undo restores both the image and its override. When a new Photos import takes `IMG_000000.jpg`, any override belonging to the previous lead frame moves with its archived filename.
 
 ## 8. Not Modeled
 - Cross-session aggregation or search.
