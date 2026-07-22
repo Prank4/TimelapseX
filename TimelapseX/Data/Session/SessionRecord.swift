@@ -20,6 +20,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var frameDurationSeconds: Double
     var frameDurationOverrides: [String: Double]
     var lastCaptureAt: Date?
+    var wasMerged: Bool
 
     init(
         id: String,
@@ -29,7 +30,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         photosAlbumIdentifier: String?,
         frameDurationSeconds: Double = Self.defaultFrameDurationSeconds,
         frameDurationOverrides: [String: Double] = [:],
-        lastCaptureAt: Date? = nil
+        lastCaptureAt: Date? = nil,
+        wasMerged: Bool = false
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -39,6 +41,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         self.frameDurationSeconds = Self.clampedFrameDuration(frameDurationSeconds)
         self.frameDurationOverrides = frameDurationOverrides.mapValues(FrameDurationPolicy.clampedOverride)
         self.lastCaptureAt = lastCaptureAt
+        self.wasMerged = wasMerged
     }
 
     enum CodingKeys: String, CodingKey {
@@ -50,6 +53,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         case frameDurationSeconds
         case frameDurationOverrides
         case lastCaptureAt
+        case wasMerged
     }
 
     init(from decoder: Decoder) throws {
@@ -64,6 +68,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         let overrides = try container.decodeIfPresent([String: Double].self, forKey: .frameDurationOverrides) ?? [:]
         frameDurationOverrides = overrides.mapValues(FrameDurationPolicy.clampedOverride)
         lastCaptureAt = try container.decodeIfPresent(Date.self, forKey: .lastCaptureAt)
+        wasMerged = try container.decodeIfPresent(Bool.self, forKey: .wasMerged) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -76,6 +81,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
         try container.encode(frameDurationSeconds, forKey: .frameDurationSeconds)
         try container.encode(frameDurationOverrides, forKey: .frameDurationOverrides)
         try container.encodeIfPresent(lastCaptureAt, forKey: .lastCaptureAt)
+        try container.encode(wasMerged, forKey: .wasMerged)
     }
 
     nonisolated var folderName: String { id }

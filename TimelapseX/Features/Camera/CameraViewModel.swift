@@ -16,6 +16,11 @@ final class CameraViewModel: NSObject, ObservableObject {
     @Published private(set) var isCapturing = false
     @Published private(set) var statusMessage = "Ready"
     @Published private(set) var levelAngleDegrees: Double?
+    @Published private(set) var latestFrameURL: URL?
+    @Published private(set) var isLatestFramePreviewVisible = false
+    @Published private(set) var zoomFactor = 1.0
+    @Published private(set) var minimumZoomFactor = 1.0
+    @Published private(set) var maximumZoomFactor = 1.0
 
     let sessionStore: SessionStore
     let settingsStore = CameraSettingsStore.shared
@@ -33,6 +38,8 @@ final class CameraViewModel: NSObject, ObservableObject {
     }()
     private var pendingCaptureTimestamp: Date?
     private var intervalCaptureTask: Task<Void, Never>?
+    private var latestFrameRefreshTask: Task<Void, Never>?
+    private var latestFramePreviewHideTask: Task<Void, Never>?
     private var inactivityRotationWorkItem: DispatchWorkItem?
     private var configured = false
     private var cancellables = Set<AnyCancellable>()
@@ -86,6 +93,26 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
         .store(in: &cancellables)
 
+        Publishers.CombineLatest(
+            settingsStore.$latestPhotoPreviewEnabled,
+            settingsStore.$latestPhotoPreviewDurationSeconds
+        )
+        .dropFirst()
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] isEnabled, _ in
+            guard let self else { return }
+            if isEnabled {
+                if self.latestFrameURL == nil {
+                    self.refreshLatestFrameURL()
+                } else {
+                    self.showLatestFramePreview()
+                }
+            } else {
+                self.hideLatestFramePreview()
+            }
+        }
+        .store(in: &cancellables)
+
         DispatchQueue.main.async { [weak self] in
             self?.scheduleInactivityRotation()
         }
@@ -93,6 +120,8 @@ final class CameraViewModel: NSObject, ObservableObject {
 
     deinit {
         intervalCaptureTask?.cancel()
+        latestFrameRefreshTask?.cancel()
+        latestFramePreviewHideTask?.cancel()
         inactivityRotationWorkItem?.cancel()
         motionManager.stopDeviceMotionUpdates()
     }
@@ -102,6 +131,106 @@ final class CameraViewModel: NSObject, ObservableObject {
         if authorizationStatus != currentStatus {
             authorizationStatus = currentStatus
         }
+    }
+
+    func refreshLatestFrameURL() {
+        latestFrameRefreshTask?.cancel()
+        guard settingsStore.latestPhotoPreviewEnabled else {
+            hideLatestFramePreview()
+            return
+        }
+        let albumFolders = sessionStore.allSessions.map(\.folderURL)
+        latestFrameRefreshTask = Task { [weak self] in
+            let latestURL: URL? = await Task.detached(priority: .utility) { () -> URL? in
+                var candidates: [(source: AlbumMergeFrameSource, url: URL)] = []
+
+                for folderURL in albumFolders {
+                    let contents = (try? FileManager.default.contentsOfDirectory(
+                        at: folderURL,
+                        includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey],
+                        options: [.skipsHiddenFiles]
+                    )) ?? []
+
+                    for url in contents where
+                        url.lastPathComponent.hasPrefix("IMG_")
+                        && url.pathExtension.lowercased() == "jpg" {
+                        let values = try? url.resourceValues(forKeys: [
+                            .contentModificationDateKey,
+                            .creationDateKey
+                        ])
+                        candidates.append((
+                            source: AlbumMergeFrameSource(
+                                albumID: folderURL.lastPathComponent,
+                                filename: url.lastPathComponent,
+                                timestamp: values?.contentModificationDate
+                                    ?? values?.creationDate
+                                    ?? .distantPast
+                            ),
+                            url: url
+                        ))
+                    }
+                }
+
+                guard let latest = AlbumMergePolicy.mostRecentFrame(
+                    in: candidates.map(\.source)
+                ) else { return nil }
+                return candidates.first {
+                    $0.source.albumID == latest.albumID
+                        && $0.source.filename == latest.filename
+                }?.url
+            }.value
+
+            guard !Task.isCancelled else { return }
+            self?.latestFrameURL = latestURL
+            self?.showLatestFramePreview()
+        }
+    }
+
+    func setZoomFactor(_ requestedZoom: Double) {
+        #if targetEnvironment(simulator)
+        zoomFactor = 1
+        #else
+        sessionQueue.async { [weak self] in
+            guard let self,
+                  let device = (self.captureSession.inputs.first as? AVCaptureDeviceInput)?.device else {
+                return
+            }
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+                self.applyZoomFactor(requestedZoom, to: device)
+            } catch {
+                Task { @MainActor in
+                    self.statusMessage = error.localizedDescription
+                }
+            }
+        }
+        #endif
+    }
+
+    private func showLatestFramePreview() {
+        latestFramePreviewHideTask?.cancel()
+        guard settingsStore.latestPhotoPreviewEnabled,
+              latestFrameURL != nil else {
+            isLatestFramePreviewVisible = false
+            return
+        }
+
+        isLatestFramePreviewVisible = true
+        let duration = LatestPhotoPreviewPolicy.clampedDuration(
+            settingsStore.latestPhotoPreviewDurationSeconds
+        )
+        latestFramePreviewHideTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.isLatestFramePreviewVisible = false
+        }
+    }
+
+    private func hideLatestFramePreview() {
+        latestFramePreviewHideTask?.cancel()
+        latestFramePreviewHideTask = nil
+        isLatestFramePreviewVisible = false
     }
 
     func requestCameraPermissionIfNeeded() {
@@ -300,7 +429,7 @@ final class CameraViewModel: NSObject, ObservableObject {
         let minutes = Int(SessionRotationPolicy.clampedInactivityMinutes(
             settingsStore.sessionInactivityMinutes
         ))
-        return "New session started after \(minutes) minutes of inactivity"
+        return "New album started after \(minutes) minutes of inactivity"
     }
 
     private func startLevelerUpdates() {
@@ -348,6 +477,7 @@ final class CameraViewModel: NSObject, ObservableObject {
             if let format = largestPhotoFormat(for: device) {
                 device.activeFormat = format
             }
+            applyZoomFactor(1, to: device)
 
             photoOutput.maxPhotoQualityPrioritization = .quality
             configured = true
@@ -414,6 +544,7 @@ final class CameraViewModel: NSObject, ObservableObject {
                 if let format = self.largestPhotoFormat(for: device) {
                     device.activeFormat = format
                 }
+                self.applyZoomFactor(1, to: device)
             } catch {
                 Task { @MainActor in
                     self.statusMessage = error.localizedDescription
@@ -477,6 +608,36 @@ final class CameraViewModel: NSObject, ObservableObject {
         }
     }
 
+    private nonisolated func applyZoomFactor(
+        _ requestedZoom: Double,
+        to device: AVCaptureDevice
+    ) {
+        let deviceMinimum = Double(device.minAvailableVideoZoomFactor)
+        let deviceMaximum = Double(device.maxAvailableVideoZoomFactor)
+        let actualZoom = CameraZoomPolicy.clampedZoom(
+            requestedZoom,
+            deviceMinimum: deviceMinimum,
+            deviceMaximum: deviceMaximum
+        )
+        device.videoZoomFactor = CGFloat(actualZoom)
+
+        let minimumZoom = CameraZoomPolicy.clampedZoom(
+            deviceMinimum,
+            deviceMinimum: deviceMinimum,
+            deviceMaximum: deviceMaximum
+        )
+        let maximumZoom = CameraZoomPolicy.clampedZoom(
+            deviceMaximum,
+            deviceMinimum: deviceMinimum,
+            deviceMaximum: deviceMaximum
+        )
+        Task { @MainActor [weak self] in
+            self?.minimumZoomFactor = minimumZoom
+            self?.maximumZoomFactor = maximumZoom
+            self?.zoomFactor = actualZoom
+        }
+    }
+
     private func largestPhotoFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {
         device.formats.max { lhs, rhs in
             let lhsDimensions = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
@@ -523,6 +684,9 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
             return
         }
 
+        let savedFrameURL = sessionStore.captureURL(
+            for: sessionStore.activeSession.nextSequence
+        )
         do {
             try sessionStore.noteCaptureSuccess(
                 sequenceNumber: sessionStore.activeSession.nextSequence,
@@ -530,6 +694,9 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
                 imageData: imageData
             )
             Task { @MainActor in
+                self.latestFrameRefreshTask?.cancel()
+                self.latestFrameURL = savedFrameURL
+                self.showLatestFramePreview()
                 self.statusMessage = "Saved frame \(self.sessionStore.activeSession.nextSequence - 1)"
                 self.scheduleInactivityRotation()
             }

@@ -65,3 +65,6 @@ in project-specific documentation.
 13. **Mark pure policies nonisolated under default MainActor isolation.** Stateless constants and functions used by persistence or detached export work must be explicitly `nonisolated` so builds stay warning-free and Swift 6 compatible.
 14. **Present system pickers from a stable screen-level view.** A toolbar `Menu` item should toggle picker presentation instead of embedding `PhotosPicker` or another modal presenter directly inside the menu.
 15. **Model slider ranges and steps as tested policy.** When a setting has domain-specific bounds or increments, define them outside the view and cover clamping and conversion with unit tests.
+16. **Give optional detached-task results an explicit type.** When a `Task.detached` closure can return `nil`, annotate the closure or receiving value as optional so both the compiler and concurrency boundary have concrete result context.
+17. **Preview the same framing that capture saves.** Camera preview layers must use aspect-fit when photo output preserves the full sensor frame; aspect-fill is only valid when the saved image is cropped to the identical viewport.
+18. **Use rotation angles for modern capture connections.** On iOS 17 and later, configure `AVCaptureConnection.videoRotationAngle` after checking support instead of using deprecated `videoOrientation` APIs.

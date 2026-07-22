@@ -40,7 +40,7 @@ final class PhotosSaveAction: ObservableObject {
         // 2. Collect frame URLs on main actor.
         let urls = frameURLs(for: session)
         guard !urls.isEmpty else {
-            state = .failed("No frames found in this session.")
+            state = .failed("No frames found in this album.")
             return
         }
 

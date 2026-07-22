@@ -69,7 +69,7 @@ struct SessionDetailView: View {
             .toolbar {
                 sessionToolbar
             }
-            .alert("Delete Session?", isPresented: $showDiscardConfirm) {
+            .alert("Delete Album?", isPresented: $showDiscardConfirm) {
                 Button("Delete", role: .destructive) { performDiscard() }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -247,7 +247,7 @@ struct SessionDetailView: View {
                 Button {
                     Task { await saveAction.save(session: store.allSessions.first(where: { $0.id == session.id }) ?? session) }
                 } label: {
-                    Label("Save Session to Photos", systemImage: "photo.stack")
+                    Label("Save Album to Photos", systemImage: "photo.stack")
                 }
                 .disabled(frameURLs.isEmpty || saveAction.state == .saving || isExporting)
             }
@@ -255,7 +255,7 @@ struct SessionDetailView: View {
             Button(role: .destructive) {
                 showDiscardConfirm = true
             } label: {
-                Label(liveStatus == .active ? "Discard Session" : "Delete Session", systemImage: "trash")
+                Label(liveStatus == .active ? "Discard Album" : "Delete Album", systemImage: "trash")
             }
             .disabled(isExporting)
         } label: {
@@ -682,7 +682,7 @@ struct SessionDetailView: View {
             checkExportedVideo()
             operationAlert = SessionOperationAlert(
                 title: "Photo Imported",
-                message: "The selected photo is now the first frame in this session."
+                message: "The selected photo is now the first frame in this album."
             )
         } catch {
             operationAlert = SessionOperationAlert(

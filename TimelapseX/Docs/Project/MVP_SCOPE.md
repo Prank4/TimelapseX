@@ -10,7 +10,8 @@ Define the first shippable slice of the app and make the non-goals explicit.
 - A dedicated Gallery tab for session browsing and a Settings tab for permissions and camera controls.
 - Session-based local storage with one active session at a time.
 - Gallery review with Save and Discard actions, multi-select photo deletion, numbered thumbnails, and a persistent pinch-adjustable grid density.
-- A live camera level indicator and configurable automatic session rotation after 5–60 capture-idle minutes.
+- Album-based Gallery terminology, non-destructive chronological merging with source tags, and confirmed multi-album deletion.
+- A live camera level indicator, configurable bottom-left latest-photo thumbnail, capture-aligned pinch zoom, and configurable automatic session rotation after 5–60 capture-idle minutes.
 - Timelapse export from a saved session.
 - Timelapse export controls for FPS, resolution, and output quality.
 - Per-frame duration overrides with global fallback, reflected in duration estimates and export timing.
