@@ -180,3 +180,45 @@ Implementation notes and handoff history for the current project snapshot.
 - Possible breakpoints: Deadline execution still depends on the app process running; background suspension can delay the work item until the app resumes.
 - Edge cases: Disabling cancels a pending deadline; enabling after the selected duration has already elapsed rotates immediately; empty sessions never rotate; legacy populated sessions continue using the newest frame modification date when no capture timestamp exists.
 - Suggested manual tests: Capture one frame, switch the toggle off past the selected deadline and confirm no rotation, turn it on and confirm immediate rotation, then test 5- and 10-minute selections and verify a new capture restarts the countdown.
+
+## 0.5.0 — Album Terminology, Merge, and Multi-Delete
+- Approach summary: Changed all user-facing Session language to Album without renaming the backward-compatible storage schema. Gallery selection can now create a new closed album by copying selected source frames in modification-date order, assigning sequential filenames, remapping explicit duration overrides, and marking every original with a Merged badge. The same selection mode supports confirmed batch deletion.
+- Files modified/added:
+  - `TimelapseX/Data/Session/AlbumMergePolicy.swift` and `TimelapseXTests/AlbumMergePolicyTests.swift` — deterministic chronological ordering, tie breakers, and sequential output names.
+  - `SessionRecord.swift` and `SessionStore.swift` — backward-compatible `wasMerged` persistence, copy/rollback merge transaction, timestamp preservation, override remapping, and staged multi-album deletion.
+  - `GalleryView.swift` — album multi-select, Merge/Delete action bar, confirmations, results, and Merged source badge.
+  - `SettingsView.swift`, `CameraViewModel.swift`, `CameraTabView.swift`, `SessionDetailView.swift`, and `PhotosSaveAction.swift` — app-facing Album terminology.
+  - `Package.swift` and project documentation — policy test wiring and source-of-truth updates.
+- Possible breakpoints: File modification dates are the durable chronology available for legacy and imported frames; external file restoration that rewrites these dates can alter merge order. Very large merges temporarily require enough free storage for a complete copy because originals are intentionally retained.
+- Edge cases: Equal timestamps sort by source album ID and filename; repeated merges are allowed and keep the Merged tag; active source albums remain active; deleting an active selected album creates a replacement; empty selections and fewer than two merge sources are rejected; an all-empty merge is rejected.
+- Suggested manual tests: Create interleaved photos across three albums, merge them, confirm source badges and source preservation, compare merged ordering to capture times, verify duration override badges, export the merged album, merge an already-merged source again, batch-delete tagged originals, and batch-delete a selection containing the active album.
+
+## 0.5.1 — Camera Latest-Photo Thumbnail
+- Approach summary: Added a persistent 60-point thumbnail at the bottom-left of the camera overlay. A successful capture publishes its saved frame URL immediately; reopening Camera performs a cancellable background scan across local albums and selects the newest frame by modification date. The existing bounded gallery decoder supplies the small preview without loading full-resolution JPEGs.
+- Files modified:
+  - `TimelapseX/Features/Camera/CameraViewModel.swift` — latest-frame URL state, background restoration, scan/capture race cancellation, and immediate successful-capture updates.
+  - `TimelapseX/Features/Camera/CameraTabView.swift` — bottom-left thumbnail with placeholder, border, accessibility label, and bounded image loading.
+  - `TimelapseX/Data/Session/AlbumMergePolicy.swift` and `TimelapseXTests/AlbumMergePolicyTests.swift` — tested newest-frame selection.
+  - Project documentation — scope, task, and detached optional-result rule.
+- Possible breakpoints: Legacy or externally restored files with rewritten modification dates can change which image is selected after relaunch; successful in-app captures update directly and do not depend on the scan.
+- Edge cases: With no photos, the thumbnail remains as a placeholder; automatic album rotation does not clear the previous thumbnail; a slow restoration scan is cancelled before a newer capture publishes; deleted or invalid images remain placeholders through the bounded loader.
+- Suggested manual tests: Launch with no albums, capture one photo, capture several more quickly, switch to Gallery and back, force-quit and relaunch, trigger automatic album rotation, and verify the bottom-left thumbnail always shows the latest available image without covering the capture hint.
+
+## 0.5.2 — Capture-Accurate Camera Framing
+- Approach summary: Changed `AVCaptureVideoPreviewLayer.videoGravity` from `.resizeAspectFill` to `.resizeAspect` during both preview creation and updates. The old fill mode cropped the live feed to the tall screen, making it appear zoomed compared with the full-sensor JPEG; aspect-fit displays the complete captured field of view. Preview orientation now uses the supported 90-degree `videoRotationAngle` API instead of deprecated `videoOrientation`.
+- Files modified: `TimelapseX/Features/Camera/CameraPreviewView.swift`, project tasks, engineering notes, and the shared learned rule.
+- Possible breakpoints: Black letterboxing is expected when the photo sensor and device screen have different aspect ratios. Filling those bars would necessarily crop the preview or require cropping the saved photo.
+- Edge cases: Lens switching reapplies aspect-fit in `updateUIView`; portrait orientation remains unchanged; grid and level overlays remain UI-only.
+- Suggested manual tests: Place distinct objects near all four preview edges, capture with Auto/Wide/Ultra-Wide where available, and compare the saved image in full-screen Gallery. Every saved edge should have been visible in the preview, allowing only tiny stabilization or device-format tolerances.
+
+## 0.5.3 — Configurable Photo Preview and Capture-Aligned Zoom
+- Approach summary: Added default-on persisted latest-photo preview settings with a 30–300 second slider in 30-second steps. Camera previews now time out, restart after every successful capture, render up to 120 points while preserving image aspect ratio, and remain memory-bounded. Added pinch zoom backed by `AVCaptureDevice.videoZoomFactor`, with tested device/app clamping and an on-screen factor badge; physical lens changes reset zoom to 1×.
+- Files modified/added:
+  - `TimelapseX/Data/Settings/CameraControlPolicy.swift` and `TimelapseXTests/CameraControlPolicyTests.swift` — preview-duration and zoom bounds, stepping, and pinch math.
+  - `CameraSettingsStore.swift` and `SettingsView.swift` — persisted preview toggle/duration and Settings UI.
+  - `CameraViewModel.swift` — preview visibility timer and direct active-device zoom application.
+  - `CameraTabView.swift` — aspect-preserving doubled thumbnail, pinch gesture, and zoom badge.
+  - `Package.swift` and project documentation — test target wiring and source-of-truth updates.
+- Possible breakpoints: Real camera zoom is unavailable in Simulator. Some devices expose large digital zoom ranges; the app deliberately caps interaction at 10×. Landscape source thumbnails can require more horizontal space, so the capture hint may compress on narrow devices.
+- Edge cases: Disabling preview cancels its timer immediately; changing duration restarts a visible preview; no-photo restoration remains hidden; rapid captures cancel prior timers; zoom is clamped to both device and app limits; switching Auto/Wide/Ultra-Wide resets zoom and republishes the new range.
+- Suggested manual tests: Toggle preview off/on, test 30-second and 5-minute endpoints, capture portrait and landscape images and verify thumbnail shape/size, rapidly capture several frames and confirm timer reset, pinch on each lens, capture at 1×/2×/maximum, and compare preview edges against saved photos.

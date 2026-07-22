@@ -8,7 +8,7 @@ let package = Package(
     products: [
         .library(
             name: "TimelapseXLogic",
-            targets: ["TimelapseXSessionLogic", "TimelapseXGalleryLogic"]
+            targets: ["TimelapseXSessionLogic", "TimelapseXGalleryLogic", "TimelapseXCameraLogic"]
         )
     ],
     targets: [
@@ -21,7 +21,7 @@ let package = Package(
                 "SessionStatus.swift",
                 "SessionStore.swift"
             ],
-            sources: ["FrameDurationPolicy.swift", "SessionRotationPolicy.swift"]
+            sources: ["AlbumMergePolicy.swift", "FrameDurationPolicy.swift", "SessionRotationPolicy.swift"]
         ),
         .target(
             name: "TimelapseXGalleryLogic",
@@ -34,9 +34,15 @@ let package = Package(
             ],
             sources: ["GalleryGridLayoutPolicy.swift", "GalleryImageLoader.swift"]
         ),
+        .target(
+            name: "TimelapseXCameraLogic",
+            path: "TimelapseX/Data/Settings",
+            exclude: ["CameraSettingsStore.swift"],
+            sources: ["CameraControlPolicy.swift"]
+        ),
         .testTarget(
             name: "TimelapseXSessionLogicTests",
-            dependencies: ["TimelapseXSessionLogic", "TimelapseXGalleryLogic"],
+            dependencies: ["TimelapseXSessionLogic", "TimelapseXGalleryLogic", "TimelapseXCameraLogic"],
             path: "TimelapseXTests"
         )
     ]

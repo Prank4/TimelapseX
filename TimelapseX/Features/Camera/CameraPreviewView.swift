@@ -15,14 +15,22 @@ struct CameraPreviewView: UIViewRepresentable {
         let view = PreviewUIView()
         view.backgroundColor = .black
         view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
-        view.previewLayer.connection?.videoOrientation = .portrait
+        view.previewLayer.videoGravity = .resizeAspect
+        configurePortraitRotation(on: view.previewLayer.connection)
         return view
     }
 
     func updateUIView(_ uiView: PreviewUIView, context: Context) {
         uiView.previewLayer.session = session
-        uiView.previewLayer.connection?.videoOrientation = .portrait
+        uiView.previewLayer.videoGravity = .resizeAspect
+        configurePortraitRotation(on: uiView.previewLayer.connection)
+    }
+
+    private func configurePortraitRotation(on connection: AVCaptureConnection?) {
+        let portraitRotationAngle: CGFloat = 90
+        guard let connection,
+              connection.isVideoRotationAngleSupported(portraitRotationAngle) else { return }
+        connection.videoRotationAngle = portraitRotationAngle
     }
 }
 

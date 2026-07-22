@@ -64,6 +64,13 @@ See `MVP_SCOPE.md`, `DATA_MODEL.md`, and `ENGINEERING_NOTES.md` for the decision
 - [x] Persist per-frame 0.5–5.0 second duration overrides with reset-to-global behavior.
 - [x] Include per-frame overrides in estimated and exported timelapse duration.
 - [x] Add a persisted automatic-session toggle and 5–60 minute inactivity slider in five-minute steps.
+- [x] Rename Session to Album throughout the app UI.
+- [x] Merge selected albums into a non-destructive chronologically sorted album and tag the originals as Merged.
+- [x] Delete multiple selected albums with confirmation.
+- [x] Show the latest local photo as a persistent bottom-left camera thumbnail.
+- [x] Match the camera preview framing to the complete captured photo instead of cropping with aspect-fill.
+- [x] Add persisted latest-photo preview controls with 30-second duration steps and a doubled aspect-ratio thumbnail.
+- [x] Add pinch-to-zoom that applies the same device zoom factor to preview and photo capture.
 
 ## Validation
 Run after 0.0.x and again after 0.4.x.

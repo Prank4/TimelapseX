@@ -9,28 +9,172 @@ import SwiftUI
 
 struct GalleryView: View {
     @ObservedObject var store: SessionStore
+    @State private var isSelectingAlbums = false
+    @State private var selectedAlbumIDs: Set<String> = []
+    @State private var showMergeConfirmation = false
+    @State private var showDeleteConfirmation = false
+    @State private var operationAlert: GalleryOperationAlert?
+    @State private var isPerformingAlbumOperation = false
 
     var body: some View {
         NavigationStack {
             List {
                 if store.allSessions.isEmpty {
                     ContentUnavailableView(
-                        "No Sessions",
+                        "No Albums",
                         systemImage: "photo.stack",
                         description: Text("Captured photos will appear here.")
                     )
                     .listRowBackground(Color.clear)
                 } else {
                     ForEach(store.allSessions) { session in
-                        NavigationLink(destination: SessionDetailView(session: session, store: store)) {
-                            GalleryRow(session: session)
+                        if isSelectingAlbums {
+                            Button {
+                                toggleSelection(for: session)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: selectedAlbumIDs.contains(session.id) ? "checkmark.circle.fill" : "circle")
+                                        .font(.title3)
+                                        .foregroundStyle(selectedAlbumIDs.contains(session.id) ? .blue : .secondary)
+                                    GalleryRow(session: session)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            NavigationLink(destination: SessionDetailView(session: session, store: store)) {
+                                GalleryRow(session: session)
+                            }
                         }
                     }
                 }
             }
             .navigationTitle("Gallery")
             .toolbar(.visible, for: .tabBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(isSelectingAlbums ? "Cancel" : "Select") {
+                        if isSelectingAlbums {
+                            endSelection()
+                        } else {
+                            isSelectingAlbums = true
+                        }
+                    }
+                    .disabled(store.allSessions.isEmpty || isPerformingAlbumOperation)
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if isSelectingAlbums {
+                    albumSelectionBar
+                }
+            }
+            .alert("Merge Albums?", isPresented: $showMergeConfirmation) {
+                Button("Merge \(selectedAlbumIDs.count) Albums") {
+                    mergeSelectedAlbums()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("A new chronologically sorted album will be created. The original albums will remain and receive a Merged tag.")
+            }
+            .alert("Delete Selected Albums?", isPresented: $showDeleteConfirmation) {
+                Button("Delete \(selectedAlbumIDs.count)", role: .destructive) {
+                    deleteSelectedAlbums()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The selected albums and all photos stored inside them will be permanently deleted. This cannot be undone.")
+            }
+            .alert(item: $operationAlert) { alert in
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
         }
+    }
+
+    private var albumSelectionBar: some View {
+        HStack(spacing: 12) {
+            if isPerformingAlbumOperation {
+                ProgressView()
+                Text("Working…")
+                    .font(.subheadline.weight(.medium))
+            } else {
+                Text("\(selectedAlbumIDs.count) selected")
+                    .font(.subheadline.weight(.medium))
+            }
+
+            Spacer()
+
+            Button {
+                showMergeConfirmation = true
+            } label: {
+                Label("Merge", systemImage: "rectangle.stack.badge.plus")
+            }
+            .disabled(selectedAlbumIDs.count < 2 || isPerformingAlbumOperation)
+
+            Button(role: .destructive) {
+                showDeleteConfirmation = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .disabled(selectedAlbumIDs.isEmpty || isPerformingAlbumOperation)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.bar)
+    }
+
+    private func toggleSelection(for album: SessionRecord) {
+        if selectedAlbumIDs.contains(album.id) {
+            selectedAlbumIDs.remove(album.id)
+        } else {
+            selectedAlbumIDs.insert(album.id)
+        }
+    }
+
+    private func selectedAlbums() -> [SessionRecord] {
+        store.allSessions.filter { selectedAlbumIDs.contains($0.id) }
+    }
+
+    private func mergeSelectedAlbums() {
+        let albums = selectedAlbums()
+        isPerformingAlbumOperation = true
+        Task {
+            defer { isPerformingAlbumOperation = false }
+            do {
+                let mergedAlbum = try await store.mergeAlbums(albums)
+                endSelection()
+                operationAlert = GalleryOperationAlert(
+                    title: "Albums Merged",
+                    message: "Created a new album containing \(mergedAlbum.frameCount) chronologically sorted photos. The originals are tagged Merged."
+                )
+            } catch {
+                operationAlert = GalleryOperationAlert(
+                    title: "Merge Failed",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func deleteSelectedAlbums() {
+        isPerformingAlbumOperation = true
+        defer { isPerformingAlbumOperation = false }
+        do {
+            try store.deleteAlbums(selectedAlbums())
+            endSelection()
+        } catch {
+            operationAlert = GalleryOperationAlert(
+                title: "Delete Failed",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func endSelection() {
+        isSelectingAlbums = false
+        selectedAlbumIDs.removeAll()
     }
 }
 
@@ -58,6 +202,15 @@ private struct GalleryRow: View {
                         .foregroundStyle(.secondary)
 
                     statusBadge
+
+                    if session.wasMerged {
+                        Text("Merged")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.purple)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(.purple.opacity(0.12), in: Capsule())
+                    }
                 }
             }
 
@@ -136,4 +289,10 @@ private struct GalleryRow: View {
               !Task.isCancelled else { return }
         thumbnail = UIImage(cgImage: loaded)
     }
+}
+
+private struct GalleryOperationAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }

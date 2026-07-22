@@ -60,6 +60,34 @@ struct SettingsView: View {
 
                 Section("Capture Options") {
                     VStack(alignment: .leading, spacing: 8) {
+                        Toggle(
+                            "Latest Photo Preview",
+                            isOn: $settingsStore.latestPhotoPreviewEnabled
+                        )
+                        Text(
+                            "Show the latest photo on Camera for \(formattedPreviewDuration(settingsStore.latestPhotoPreviewDurationSeconds))."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        Slider(
+                            value: $settingsStore.latestPhotoPreviewDurationSeconds,
+                            in: LatestPhotoPreviewPolicy.minimumDuration...LatestPhotoPreviewPolicy.maximumDuration,
+                            step: LatestPhotoPreviewPolicy.durationStep
+                        )
+                        .disabled(!settingsStore.latestPhotoPreviewEnabled)
+
+                        HStack {
+                            Text("30 sec")
+                            Spacer()
+                            Text("5 min")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 8) {
                         Toggle("Timed Capture", isOn: $settingsStore.intervalCaptureEnabled)
                         Text("After the next manual frame, the camera will keep capturing every \(formattedInterval(settingsStore.intervalCaptureSeconds)).")
                             .font(.caption)
@@ -101,14 +129,14 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
 
-                Section("Session") {
+                Section("Album") {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle(
-                            "Auto-Start New Session",
+                            "Auto-Start New Album",
                             isOn: $settingsStore.automaticSessionRotationEnabled
                         )
                         Text(
-                            "Create a new session after \(formattedInactivityMinutes(settingsStore.sessionInactivityMinutes)) without a successful capture. Empty sessions are not replaced."
+                            "Create a new album after \(formattedInactivityMinutes(settingsStore.sessionInactivityMinutes)) without a successful capture. Empty albums are not replaced."
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -130,13 +158,13 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 4)
 
-                    statusRow(title: "Active Session", value: store.activeSession.id)
+                    statusRow(title: "Active Album", value: store.activeSession.id)
                     statusRow(title: "Next Frame", value: "\(store.activeSession.nextSequence)")
                     statusRow(title: "Stored Frames", value: "\(store.activeSession.frameCount)")
                     Button {
                         startNewSession()
                     } label: {
-                        Label("Start New Session", systemImage: "plus.circle")
+                        Label("Start New Album", systemImage: "plus.circle")
                     }
                 }
             }
@@ -145,7 +173,7 @@ struct SettingsView: View {
             .onAppear {
                 settingsStore.refreshPermissions()
             }
-            .alert("Session Error", isPresented: Binding(get: { sessionActionError != nil }, set: { if !$0 { sessionActionError = nil } })) {
+            .alert("Album Error", isPresented: Binding(get: { sessionActionError != nil }, set: { if !$0 { sessionActionError = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(sessionActionError ?? "")
@@ -232,5 +260,18 @@ struct SettingsView: View {
 
     private func formattedInactivityMinutes(_ minutes: Double) -> String {
         "\(Int(SessionRotationPolicy.clampedInactivityMinutes(minutes))) minutes"
+    }
+
+    private func formattedPreviewDuration(_ seconds: Double) -> String {
+        let totalSeconds = Int(LatestPhotoPreviewPolicy.clampedDuration(seconds))
+        let minutes = totalSeconds / 60
+        let remainingSeconds = totalSeconds % 60
+        if minutes == 0 {
+            return "\(remainingSeconds) seconds"
+        }
+        if remainingSeconds == 0 {
+            return "\(minutes) minute\(minutes == 1 ? "" : "s")"
+        }
+        return "\(minutes) min \(remainingSeconds) sec"
     }
 }

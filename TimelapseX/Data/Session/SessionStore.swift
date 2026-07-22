@@ -263,6 +263,143 @@ final class SessionStore: ObservableObject {
         try persistAndPublish(updated)
     }
 
+    @discardableResult
+    func mergeAlbums(_ selectedAlbums: [SessionRecord]) async throws -> SessionRecord {
+        let selectedIDs = Set(selectedAlbums.map(\.id))
+        guard selectedIDs.count >= 2 else {
+            throw NSError(
+                domain: "TimelapseX.AlbumMerge",
+                code: 501,
+                userInfo: [NSLocalizedDescriptionKey: "Select at least two albums to merge."]
+            )
+        }
+
+        let sourceAlbums = allSessions.filter { selectedIDs.contains($0.id) }
+        guard sourceAlbums.count == selectedIDs.count else {
+            throw NSError(
+                domain: "TimelapseX.AlbumMerge",
+                code: 502,
+                userInfo: [NSLocalizedDescriptionKey: "One or more selected albums no longer exist."]
+            )
+        }
+
+        let sourceFrames = try sourceAlbums.flatMap { album in
+            try mergeFrames(in: album)
+        }
+        guard !sourceFrames.isEmpty else {
+            throw NSError(
+                domain: "TimelapseX.AlbumMerge",
+                code: 503,
+                userInfo: [NSLocalizedDescriptionKey: "The selected albums do not contain any photos."]
+            )
+        }
+
+        let sortedDescriptors = AlbumMergePolicy.chronologicallySorted(
+            sourceFrames.map(\.descriptor)
+        )
+        let frameLookup = Dictionary(uniqueKeysWithValues: sourceFrames.map {
+            (Self.mergeFrameKey(albumID: $0.descriptor.albumID, filename: $0.descriptor.filename), $0)
+        })
+        let createdAt = sortedDescriptors[0].timestamp
+        let mergedID = uniqueMergedAlbumID(createdAt: createdAt)
+        let firstSourceAlbum = sourceAlbums.first {
+            $0.id == sortedDescriptors[0].albumID
+        } ?? sourceAlbums[0]
+        var mergedAlbum = SessionRecord(
+            id: mergedID,
+            createdAt: createdAt,
+            status: .closed,
+            nextSequence: sortedDescriptors.count + 1,
+            photosAlbumIdentifier: nil,
+            frameDurationSeconds: firstSourceAlbum.frameDurationSeconds,
+            lastCaptureAt: sortedDescriptors.last?.timestamp
+        )
+        var persistedTaggedAlbums: [SessionRecord] = []
+
+        do {
+            try Self.ensureSessionFolder(mergedAlbum, using: fileManager)
+            let destinationFolder = mergedAlbum.folderURL
+            let copyFileManager = fileManager
+            mergedAlbum.frameDurationOverrides = try await Task.detached(priority: .userInitiated) {
+                try Self.copyMergedFrames(
+                    sortedDescriptors: sortedDescriptors,
+                    frameLookup: frameLookup,
+                    destinationFolder: destinationFolder,
+                    using: copyFileManager
+                )
+            }.value
+
+            try Self.persistSession(mergedAlbum, using: fileManager, encoder: encoder)
+
+            for sourceAlbum in sourceAlbums {
+                var taggedAlbum = sourceAlbum
+                taggedAlbum.wasMerged = true
+                try Self.persistSession(taggedAlbum, using: fileManager, encoder: encoder)
+                persistedTaggedAlbums.append(sourceAlbum)
+                if taggedAlbum.id == activeSession.id {
+                    activeSession = taggedAlbum
+                }
+            }
+
+            refreshAllSessions()
+            return mergedAlbum
+        } catch {
+            for originalAlbum in persistedTaggedAlbums {
+                try? Self.persistSession(originalAlbum, using: fileManager, encoder: encoder)
+                if originalAlbum.id == activeSession.id {
+                    activeSession = originalAlbum
+                }
+            }
+            try? fileManager.removeItem(at: mergedAlbum.folderURL)
+            refreshAllSessions()
+            throw error
+        }
+    }
+
+    func deleteAlbums(_ selectedAlbums: [SessionRecord]) throws {
+        let selectedIDs = Set(selectedAlbums.map(\.id))
+        guard !selectedIDs.isEmpty else { return }
+
+        let albums = allSessions.filter { selectedIDs.contains($0.id) }
+        guard albums.count == selectedIDs.count else {
+            throw NSError(
+                domain: "TimelapseX.AlbumDelete",
+                code: 504,
+                userInfo: [NSLocalizedDescriptionKey: "One or more selected albums no longer exist."]
+            )
+        }
+
+        let stagingFolder = Self.sharedSessionsDirectory.appendingPathComponent(
+            ".delete-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(at: stagingFolder, withIntermediateDirectories: false)
+        var stagedAlbums: [(original: URL, staged: URL)] = []
+
+        do {
+            for album in albums {
+                guard fileManager.fileExists(atPath: album.folderURL.path) else { continue }
+                let stagedURL = stagingFolder.appendingPathComponent(album.folderName, isDirectory: true)
+                try fileManager.moveItem(at: album.folderURL, to: stagedURL)
+                stagedAlbums.append((album.folderURL, stagedURL))
+            }
+
+            if selectedIDs.contains(activeSession.id) {
+                try rotateToNewSession()
+            } else {
+                refreshAllSessions()
+            }
+            try? fileManager.removeItem(at: stagingFolder)
+        } catch {
+            for pair in stagedAlbums.reversed() {
+                try? fileManager.moveItem(at: pair.staged, to: pair.original)
+            }
+            try? fileManager.removeItem(at: stagingFolder)
+            refreshAllSessions()
+            throw error
+        }
+    }
+
     private func validateFrameURL(_ url: URL, in session: SessionRecord) throws {
         let frameFolder = url.deletingLastPathComponent().standardizedFileURL
         let sessionFolder = session.folderURL.standardizedFileURL
@@ -270,14 +407,14 @@ final class SessionStore: ObservableObject {
             throw NSError(
                 domain: "TimelapseX.SessionStore",
                 code: 201,
-                userInfo: [NSLocalizedDescriptionKey: "This frame does not belong to the selected session."]
+                userInfo: [NSLocalizedDescriptionKey: "This frame does not belong to the selected album."]
             )
         }
         guard url.lastPathComponent.hasPrefix("IMG_"), url.pathExtension.lowercased() == "jpg" else {
             throw NSError(
                 domain: "TimelapseX.SessionStore",
                 code: 202,
-                userInfo: [NSLocalizedDescriptionKey: "Only session JPG frames can be deleted."]
+                userInfo: [NSLocalizedDescriptionKey: "Only album JPG frames can be deleted."]
             )
         }
         guard fileManager.fileExists(atPath: url.path) else {
@@ -311,6 +448,91 @@ final class SessionStore: ObservableObject {
             activeSession = session
         }
         refreshAllSessions()
+    }
+
+    private func mergeFrames(in album: SessionRecord) throws -> [MergeSourceFrame] {
+        let urls = try fileManager.contentsOfDirectory(
+            at: album.folderURL,
+            includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        return urls.compactMap { url in
+            guard url.lastPathComponent.hasPrefix("IMG_"),
+                  url.pathExtension.lowercased() == "jpg" else { return nil }
+            let values = try? url.resourceValues(forKeys: [
+                .contentModificationDateKey,
+                .creationDateKey
+            ])
+            let timestamp = values?.contentModificationDate
+                ?? values?.creationDate
+                ?? album.createdAt
+            return MergeSourceFrame(
+                descriptor: AlbumMergeFrameSource(
+                    albumID: album.id,
+                    filename: url.lastPathComponent,
+                    timestamp: timestamp
+                ),
+                url: url,
+                durationOverride: album.frameDurationOverrides[url.lastPathComponent]
+            )
+        }
+    }
+
+    private func uniqueMergedAlbumID(createdAt: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let baseID = "\(formatter.string(from: createdAt))_merged"
+        var candidate = baseID
+        var suffix = 2
+        while fileManager.fileExists(
+            atPath: Self.sharedSessionsDirectory.appendingPathComponent(candidate).path
+        ) {
+            candidate = "\(baseID)_\(suffix)"
+            suffix += 1
+        }
+        return candidate
+    }
+
+    private nonisolated static func mergeFrameKey(albumID: String, filename: String) -> String {
+        "\(albumID)\u{0}\(filename)"
+    }
+
+    private nonisolated static func copyMergedFrames(
+        sortedDescriptors: [AlbumMergeFrameSource],
+        frameLookup: [String: MergeSourceFrame],
+        destinationFolder: URL,
+        using fileManager: FileManager
+    ) throws -> [String: Double] {
+        var durationOverrides: [String: Double] = [:]
+
+        for (index, descriptor) in sortedDescriptors.enumerated() {
+            let key = mergeFrameKey(
+                albumID: descriptor.albumID,
+                filename: descriptor.filename
+            )
+            guard let sourceFrame = frameLookup[key] else {
+                throw NSError(
+                    domain: "TimelapseX.AlbumMerge",
+                    code: 505,
+                    userInfo: [NSLocalizedDescriptionKey: "A source photo disappeared while preparing the merge."]
+                )
+            }
+            let outputFilename = AlbumMergePolicy.outputFilename(forZeroBasedIndex: index)
+            let outputURL = destinationFolder.appendingPathComponent(outputFilename)
+            try fileManager.copyItem(at: sourceFrame.url, to: outputURL)
+            try fileManager.setAttributes(
+                [.modificationDate: descriptor.timestamp],
+                ofItemAtPath: outputURL.path
+            )
+            if let durationOverride = sourceFrame.durationOverride {
+                durationOverrides[outputFilename] = durationOverride
+            }
+        }
+
+        return durationOverrides
     }
 
     private static func prepareSessionsDirectory(using fileManager: FileManager) throws {
@@ -383,7 +605,8 @@ final class SessionStore: ObservableObject {
             photosAlbumIdentifier: session.photosAlbumIdentifier,
             frameDurationSeconds: session.frameDurationSeconds,
             frameDurationOverrides: session.frameDurationOverrides,
-            lastCaptureAt: session.lastCaptureAt
+            lastCaptureAt: session.lastCaptureAt,
+            wasMerged: session.wasMerged
         )
         let data = try encoder.encode(persisted)
         try data.write(to: session.sessionJSONURL, options: .atomic)
@@ -435,4 +658,11 @@ private struct PersistedSession: Codable {
     let frameDurationSeconds: Double?
     let frameDurationOverrides: [String: Double]?
     let lastCaptureAt: Date?
+    let wasMerged: Bool?
+}
+
+private struct MergeSourceFrame: Sendable {
+    let descriptor: AlbumMergeFrameSource
+    let url: URL
+    let durationOverride: Double?
 }

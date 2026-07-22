@@ -114,6 +114,24 @@ final class CameraSettingsStore: ObservableObject {
             )
         }
     }
+
+    @Published var latestPhotoPreviewEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                latestPhotoPreviewEnabled,
+                forKey: "settings.latestPhotoPreviewEnabled"
+            )
+        }
+    }
+
+    @Published var latestPhotoPreviewDurationSeconds: Double {
+        didSet {
+            UserDefaults.standard.set(
+                LatestPhotoPreviewPolicy.clampedDuration(latestPhotoPreviewDurationSeconds),
+                forKey: "settings.latestPhotoPreviewDurationSeconds"
+            )
+        }
+    }
     
     @Published var cameraPermissionStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
     @Published var photosPermissionStatus: PHAuthorizationStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
@@ -139,6 +157,15 @@ final class CameraSettingsStore: ObservableObject {
         ) as? Double
         self.sessionInactivityMinutes = SessionRotationPolicy.clampedInactivityMinutes(
             savedInactivityMinutes ?? SessionRotationPolicy.defaultInactivityMinutes
+        )
+        self.latestPhotoPreviewEnabled = (
+            UserDefaults.standard.object(forKey: "settings.latestPhotoPreviewEnabled") as? Bool
+        ) ?? true
+        let savedPreviewDuration = UserDefaults.standard.object(
+            forKey: "settings.latestPhotoPreviewDurationSeconds"
+        ) as? Double
+        self.latestPhotoPreviewDurationSeconds = LatestPhotoPreviewPolicy.clampedDuration(
+            savedPreviewDuration ?? LatestPhotoPreviewPolicy.defaultDuration
         )
         
         NotificationCenter.default.addObserver(
